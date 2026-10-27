@@ -1215,16 +1215,46 @@ export const handleVoice = safe('voice', async (ctx, deps) => {
     return;
   }
 
+  const input = {
+    buffer,
+    mimeType: voice.mime_type || 'audio/ogg',
+    fileName: voice.file_name || `audio-${voice.file_id}.ogg`,
+  };
+
+  // Motor local: si Canal7 o los subtitulos estan usando Whisper, el audio
+  // espera en segundo plano para no trabar el resto de los mensajes del bot.
+  const busy = typeof ocr.audioBusy === 'function' ? await ocr.audioBusy() : { busy: false };
+  if (busy.busy) {
+    await replyHtml(ctx, [
+      '⏳ Recibí el audio.',
+      'Ahora la Mac está usando Whisper para otra tarea (Canal7 o subtítulos).',
+      'Lo transcribo apenas se libere y te respondo acá.',
+    ].join('\n'));
+    void transcribeAndRegister(ctx, deps, input).catch((error) => {
+      deps.logger?.error?.('fallo la transcripcion en espera', { error });
+    });
+    return;
+  }
+
+  await transcribeAndRegister(ctx, deps, input);
+});
+
+async function transcribeAndRegister(ctx, deps, input) {
+  const ocr = deps.services.ocr;
   let transcript;
   try {
-    transcript = await ocr.transcribeAudio({
-      buffer,
-      mimeType: voice.mime_type || 'audio/ogg',
-      fileName: voice.file_name || `audio-${voice.file_id}.ogg`,
-    });
+    transcript = await ocr.transcribeAudio(input);
   } catch (error) {
     deps.logger?.error?.('fallo la transcripcion de audio', { error });
     await replyHtml(ctx, '❌ No pude transcribir el audio. Probá de nuevo o escribí el movimiento.');
+    return;
+  }
+
+  if (transcript?.error === 'whisper-ocupado') {
+    await replyHtml(ctx, [
+      '⌛ Pasó demasiado tiempo y Whisper sigue ocupado con otra tarea, así que descarté el audio.',
+      'Escribí el movimiento (<code>Gasté 15.000 en el super</code>) o reenviá el audio más tarde.',
+    ].join('\n'));
     return;
   }
 
@@ -1239,7 +1269,7 @@ export const handleVoice = safe('voice', async (ctx, deps) => {
     metadata: { transcript: transcript.text },
     fromVoice: true,
   });
-});
+}
 
 export const handleDocument = safe('document', async (ctx, deps) => {
   const message = ctx.message || {};

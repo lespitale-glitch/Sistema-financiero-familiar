@@ -530,7 +530,7 @@ export function createOcrService({ gemini, local = null, config, logger, clock =
    * @param {string} [input.fileName]
    * @returns {Promise<{ok:boolean, text:string, language:string, error:string|null, model:string}>}
    */
-  async function transcribeAudio({ buffer, mimeType = null, fileName = null } = {}) {
+  async function transcribeAudio({ buffer, mimeType = null, fileName = null, onQueued = null } = {}) {
     const audioModel = provider === 'local'
       ? LOCAL_AUDIO_MODEL
       : config?.gemini?.audioModel || gemini?.audioModel || null;
@@ -555,7 +555,7 @@ export function createOcrService({ gemini, local = null, config, logger, clock =
       }
       let localResult;
       try {
-        localResult = await local.transcribe({ buffer: bytes, mime, fileName });
+        localResult = await local.transcribe({ buffer: bytes, mime, fileName, onQueued });
       } catch (error) {
         logger?.warn?.('voz local: fallo inesperado', { error: error?.message || String(error), fileName });
         return { ok: false, text: '', language: 'es', error: 'transcripcion-fallida', model: audioModel };
@@ -610,8 +610,20 @@ export function createOcrService({ gemini, local = null, config, logger, clock =
     return { ok: true, text, language: 'es', error: null, model: audioModel };
   }
 
+  /** ¿Whisper esta ocupado por otro programa? Solo aplica al motor local. */
+  async function audioBusy() {
+    if (provider !== 'local' || typeof local?.whisperBusy !== 'function') return { busy: false, processes: [] };
+    try {
+      return await local.whisperBusy();
+    } catch (error) {
+      logger?.warn?.('voz local: no pude revisar si whisper esta ocupado', { error: error?.message || String(error) });
+      return { busy: true, processes: [] };
+    }
+  }
+
   return {
     provider,
+    audioBusy,
     enabled,
     documentsEnabled,
     audioEnabled,

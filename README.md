@@ -251,6 +251,9 @@ Para Supabase, ejecutar antes `supabase/schema.sql` en el SQL Editor del proyect
 | `LOCAL_WHISPER_THREADS` | No | `4` | Hilos de CPU para transcribir. |
 | `LOCAL_WHISPER_BIN` / `LOCAL_FFMPEG_BIN` | No | se buscan en `PATH` y Homebrew | Rutas explícitas si la app corre como servicio. |
 | `LOCAL_AI_TIMEOUT_MS` | No | `120000` | Tiempo máximo por archivo. |
+| `LOCAL_WHISPER_BUSY_PATTERN` | No | Canal7, subtítulos y Whisper en general | Procesos que indican que otro programa está usando Whisper (`pgrep -f -i`, solo lectura). |
+| `LOCAL_WHISPER_MAX_WAIT_MIN` | No | `30` | Minutos máximos que un audio espera a que Whisper se libere. |
+| `LOCAL_WHISPER_CHECK_SECONDS` | No | `20` | Cada cuánto se vuelve a revisar. |
 
 ### Vencimientos y dólares
 
@@ -447,6 +450,8 @@ Y en `.env`:
 ```env
 AI_PROVIDER=local
 ```
+
+**Whisper compartido:** si en la Mac corren otros programas con Whisper (por ejemplo, la transcripción de Canal7 o los subtítulos), el bot no compite con ellos por la RAM. Antes de transcribir, revisa con `pgrep` (solo lee la lista de procesos, nunca mata nada) si alguno está usando Whisper. Si lo encuentra, responde "Recibí el audio" y lo transcribe apenas se libere, sin trabar el resto del bot. Si en `LOCAL_WHISPER_MAX_WAIT_MIN` minutos no se liberó, avisa y pide escribir el gasto. Nunca corren dos transcripciones del bot a la vez.
 
 Consumo: no queda nada corriendo en segundo plano. Cada foto tarda 1 o 2 segundos. Cada audio levanta whisper unos segundos y usa ~500 MB de RAM mientras transcribe. Para usar menos RAM: `WHISPER_MODEL=base npm run setup:mac` y `LOCAL_WHISPER_MODEL=models/ggml-base.bin` (menos preciso).
 

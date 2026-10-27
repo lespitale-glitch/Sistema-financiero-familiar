@@ -45,6 +45,7 @@ Stack: **Node.js ESM**, Express, Telegraf, `dotenv`, `node:sqlite`, Gemini REST.
 11. **Nunca se guardan dólares como pesos.** Si un monto viene en USD y no hay cotización, `transactions.create` lanza `StoreError` con código `FX_UNAVAILABLE` y el bot pide cargarlo en pesos.
 12. **Variables booleanas ausentes usan su default documentado** (`bool()` en `config.js`).
 13. **Motor local solo en macOS.** En otro sistema `AI_PROVIDER=local` deja OCR y voz deshabilitados con un warning; el resto funciona.
+14. **Whisper compartido.** La voz local solo arranca si `pgrep -f -i <LOCAL_WHISPER_BUSY_PATTERN>` no encuentra otro Whisper (Canal7, subtítulos); si no, espera en segundo plano (máx. `LOCAL_WHISPER_MAX_WAIT_MIN`). Nunca matar procesos ajenos; si `pgrep` falla, se asume ocupado.
 
 ---
 
@@ -244,6 +245,7 @@ Roles: `husband`, `wife`, `daughter`, `son`, `other`.
 | `INGEST_RATE_LIMIT_PER_MINUTE` | No | `30` | Límite por IP/minuto. `0` lo desactiva. |
 | `AI_PROVIDER` | No | `gemini` | `gemini` o `local` (macOS: Vision + whisper.cpp). |
 | `LOCAL_OCR_BIN`, `LOCAL_OCR_LANGUAGES`, `LOCAL_WHISPER_MODEL`, `LOCAL_WHISPER_BIN`, `LOCAL_FFMPEG_BIN`, `LOCAL_WHISPER_THREADS`, `LOCAL_AI_TIMEOUT_MS` | No | ver `.env.example` | Motor local. |
+| `LOCAL_WHISPER_BUSY_PATTERN`, `LOCAL_WHISPER_MAX_WAIT_MIN`, `LOCAL_WHISPER_CHECK_SECONDS` | No | ver `.env.example`, `30`, `20` | La voz local espera si otro programa usa Whisper (Canal7, subtítulos). |
 | `DUE_REMINDERS_ENABLED`, `DUE_REMINDER_AT`, `DUE_REMINDER_DAYS` | No | `true`, `09:00`, `3,1,0` | Recordatorio de vencimientos. |
 | `USD_ARS_RATE`, `USD_RATE_SOURCE`, `FX_API_URL` | No | vacío, `oficial`, dolarapi.com | Cotización del dólar. |
 | `TRUST_PROXY` | No | `1` | Valor de Express `trust proxy` (saltos, `true`/`false` o lista de IPs). Nunca `true` en producción. |

@@ -123,6 +123,7 @@ test('motor local: OCR llama a Vision y transcribe con ffmpeg + whisper', async 
   const calls = [];
   const runner = async (file, args) => {
     calls.push({ file: path.basename(file), args });
+    if (file === '/usr/bin/pgrep') return { ok: false, code: 1, stdout: '', stderr: '' }; // nadie usa whisper
     if (file === ocrBin) return { ok: true, code: 0, stdout: `${EDESUR}\n`, stderr: '' };
     if (file.endsWith('ffmpeg')) return { ok: true, code: 0, stdout: '', stderr: '' };
     return { ok: true, code: 0, stdout: ' Gasté 15.000 en el super [BLANK_AUDIO]\n', stderr: '' };
@@ -140,10 +141,13 @@ test('motor local: OCR llama a Vision y transcribe con ffmpeg + whisper', async 
 
   const audio = await engine.transcribe({ buffer: Buffer.from('ogg'), mime: 'audio/ogg' });
   assert.deepEqual(audio, { ok: true, text: 'Gasté 15.000 en el super' });
-  assert.equal(calls[1].file, 'ffmpeg');
-  assert.ok(calls[1].args.includes('16000'));
-  assert.equal(calls[2].file, 'whisper-cli');
-  assert.deepEqual(calls[2].args.slice(4, 6), ['-l', 'es']);
+  assert.equal(calls[1].file, 'pgrep');
+  assert.deepEqual(calls[1].args.slice(0, 3), ['-f', '-i', '-l']);
+  assert.match(calls[1].args[3], /transcribir_pendientes/);
+  assert.equal(calls[2].file, 'ffmpeg');
+  assert.ok(calls[2].args.includes('16000'));
+  assert.equal(calls[3].file, 'whisper-cli');
+  assert.deepEqual(calls[3].args.slice(4, 6), ['-l', 'es']);
 
   // Los archivos temporales se borran.
   assert.equal(fs.existsSync(path.dirname(calls[0].args[0])), false);
@@ -151,10 +155,86 @@ test('motor local: OCR llama a Vision y transcribe con ffmpeg + whisper', async 
 
 test('motor local: errores de los binarios se informan sin lanzar', async (t) => {
   const { dir, config } = fakeMacInstall(t);
-  const runner = async () => ({ ok: false, code: 4, killed: false, stdout: '', stderr: 'Error de Vision' });
+  const runner = async (file) => (file === '/usr/bin/pgrep'
+    ? { ok: false, code: 1, stdout: '', stderr: '' }
+    : { ok: false, code: 4, killed: false, stdout: '', stderr: 'Error de Vision' });
   const engine = createLocalEngine({ config, runner, platform: 'darwin', envPath: dir });
   assert.deepEqual(await engine.recognizeText({ buffer: Buffer.from('x'), mime: 'image/png' }), { ok: false, error: 'ocr-local-fallo' });
   assert.deepEqual(await engine.transcribe({ buffer: Buffer.from('x'), mime: 'audio/ogg' }), { ok: false, error: 'audio-no-convertible' });
+});
+
+test('whisper ocupado por Canal7: espera, avisa una vez y transcribe al liberarse', async (t) => {
+  const { dir, config } = fakeMacInstall(t);
+  let pgrepCalls = 0;
+  const order = [];
+  const runner = async (file) => {
+    const name = path.basename(file);
+    order.push(name);
+    if (name === 'pgrep') {
+      pgrepCalls += 1;
+      return pgrepCalls < 3
+        ? { ok: true, code: 0, stdout: '4242 python3.14 transcribir_pendientes.py\n', stderr: '' }
+        : { ok: false, code: 1, stdout: '', stderr: '' };
+    }
+    if (name === 'ffmpeg') return { ok: true, code: 0, stdout: '', stderr: '' };
+    return { ok: true, code: 0, stdout: 'gasté 3000 en pan', stderr: '' };
+  };
+  let clock = 0;
+  const sleeps = [];
+  const engine = createLocalEngine({
+    config,
+    runner,
+    platform: 'darwin',
+    envPath: dir,
+    sleep: async (ms) => { sleeps.push(ms); clock += ms; },
+    now: () => clock,
+  });
+
+  const busy = await engine.whisperBusy();
+  assert.equal(busy.busy, true);
+  assert.match(busy.processes[0], /transcribir_pendientes/);
+  pgrepCalls = 0;
+
+  const queued = [];
+  const result = await engine.transcribe({
+    buffer: Buffer.from('ogg'),
+    mime: 'audio/ogg',
+    onQueued: (status) => queued.push(status.processes[0]),
+  });
+  assert.deepEqual(result, { ok: true, text: 'gasté 3000 en pan' });
+  assert.equal(queued.length, 1, 'avisa una sola vez');
+  assert.deepEqual(sleeps, [20_000, 20_000]);
+  // whisper arranca recien despues de que pgrep no encuentra a nadie.
+  assert.deepEqual(order.slice(-5), ['pgrep', 'pgrep', 'pgrep', 'ffmpeg', 'whisper-cli']);
+});
+
+test('whisper ocupado mas que el maximo: no transcribe y lo informa', async (t) => {
+  const { dir, config } = fakeMacInstall(t);
+  const order = [];
+  const runner = async (file) => {
+    order.push(path.basename(file));
+    return { ok: true, code: 0, stdout: '99 mlx_whisper\n', stderr: '' };
+  };
+  let clock = 0;
+  const engine = createLocalEngine({
+    config,
+    runner,
+    platform: 'darwin',
+    envPath: dir,
+    sleep: async (ms) => { clock += ms; },
+    now: () => clock,
+  });
+  const result = await engine.transcribe({ buffer: Buffer.from('ogg'), mime: 'audio/ogg' });
+  assert.deepEqual(result, { ok: false, error: 'whisper-ocupado' });
+  assert.ok(!order.includes('whisper-cli'));
+  assert.ok(clock >= 30 * 60_000);
+});
+
+test('si pgrep falla por otro motivo se asume ocupado (prudencia con la RAM)', async (t) => {
+  const { dir, config } = fakeMacInstall(t);
+  const runner = async () => ({ ok: false, code: 3, stdout: '', stderr: 'pgrep: error' });
+  const engine = createLocalEngine({ config, runner, platform: 'darwin', envPath: dir });
+  assert.deepEqual(await engine.whisperBusy(), { busy: true, processes: [] });
 });
 
 test('motor local sin whisper: lee facturas pero la voz queda apagada', (t) => {
@@ -205,4 +285,45 @@ test('OCR local sin instalar responde con un error claro', async () => {
   const extraction = await ocr.extractDocument({ buffer: Buffer.from('x'), mimeType: 'image/png' });
   assert.equal(extraction.error, 'ocr-local-no-disponible');
   assert.match(extraction.warnings[0], /npm run setup:mac/);
+});
+
+test('bot: con whisper ocupado responde enseguida y registra el gasto al liberarse', async (t) => {
+  const { createHarness, createFakeCtx, createFakeOcr, allReplyText } = await import('./helpers/bot-harness.js');
+  const { handleVoice } = await import('../src/bot/handlers.js');
+  let release;
+  const freed = new Promise((resolve) => { release = resolve; });
+  const ocr = createFakeOcr({
+    provider: 'local',
+    async audioBusy() {
+      return { busy: true, processes: ['4242 transcribir_pendientes.py'] };
+    },
+    async transcribeAudio() {
+      await freed; // simula la espera hasta que Canal7 termina
+      return { ok: true, text: 'Gasté 2500 en pan' };
+    },
+  });
+  const harness = await createHarness({ ocr });
+  t.after(() => harness.close());
+  const ctx = createFakeCtx({
+    user: harness.user,
+    message: { voice: { file_id: 'voz-1', file_size: 1000, mime_type: 'audio/ogg' } },
+  });
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(Buffer.from('ogg'));
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  await handleVoice(ctx, harness.deps);
+  assert.match(allReplyText(ctx), /Recibí el audio/);
+  assert.equal((await harness.repos.transactions.list({ limit: 5 })).length, 0);
+
+  release();
+  for (let i = 0; i < 50 && (await harness.repos.transactions.list({ limit: 5 })).length === 0; i += 1) {
+    await new Promise((resolve) => { setTimeout(resolve, 10); });
+  }
+  const [transaction] = await harness.repos.transactions.list({ limit: 5 });
+  assert.equal(transaction.amountCents, 250_000);
+  assert.equal(transaction.source, 'voice');
+  assert.match(allReplyText(ctx), /Gasté 2500 en pan/);
 });

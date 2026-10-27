@@ -17,6 +17,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const MAX_OUTPUT_BYTES = 10 * 1024 * 1024;
+const PGREP_BIN = '/usr/bin/pgrep';
 const HOMEBREW_DIRS = ['/opt/homebrew/bin', '/usr/local/bin'];
 
 const EXTENSION_BY_MIME = Object.freeze({
@@ -96,6 +97,8 @@ export function createLocalEngine({
   platform = process.platform,
   fsImpl = fs,
   envPath = process.env.PATH,
+  sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms).unref?.(); }),
+  now = () => Date.now(),
 } = {}) {
   const settings = config?.ai?.local || {};
   const timeout = Number(settings.timeoutMs) || 120000;
@@ -130,6 +133,53 @@ export function createLocalEngine({
   const audioEnabled = Boolean(whisperBin && ffmpegBin && whisperModel);
 
   if (problems.length) logger?.warn?.('motor local incompleto', { problems });
+
+  const busyPattern = settings.whisperBusyPattern || '';
+  const maxWaitMs = Number.isFinite(settings.whisperMaxWaitMs) ? settings.whisperMaxWaitMs : 30 * 60_000;
+  const checkMs = Number(settings.whisperCheckMs) || 20_000;
+  let ownTranscription = Promise.resolve(); // de a un audio por vez
+
+  /**
+   * ¿Otro programa esta usando Whisper? Usa `pgrep -f -i` (solo lee la lista
+   * de procesos, nunca mata nada). Si pgrep falla por otro motivo, se asume
+   * ocupado: es preferible esperar a competir por la RAM con Canal7.
+   * @returns {Promise<{busy: boolean, processes: string[]}>}
+   */
+  async function whisperBusy() {
+    if (!busyPattern) return { busy: false, processes: [] };
+    const result = await runner(PGREP_BIN, ['-f', '-i', '-l', busyPattern], { timeout: 10_000 });
+    if (result.ok) {
+      const processes = result.stdout.split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 5);
+      return { busy: processes.length > 0, processes };
+    }
+    if (Number(result.code) === 1) return { busy: false, processes: [] }; // pgrep: sin coincidencias
+    logger?.warn?.('voz local: no pude revisar los procesos, espero por las dudas', { stderr: tail(result.stderr) });
+    return { busy: true, processes: [] };
+  }
+
+  /** Espera hasta que nadie use Whisper o hasta maxWaitMs. */
+  async function waitForWhisper({ onQueued } = {}) {
+    const started = now();
+    let notified = false;
+    for (;;) {
+      const status = await whisperBusy();
+      if (!status.busy) return { ok: true, waitedMs: now() - started };
+      if (!notified) {
+        notified = true;
+        logger?.info?.('voz local: whisper ocupado por otro programa, audio en espera', { processes: status.processes });
+        try {
+          await onQueued?.(status);
+        } catch (error) {
+          logger?.warn?.('voz local: fallo el aviso de espera', { error: error?.message || String(error) });
+        }
+      }
+      if (now() - started >= maxWaitMs) {
+        logger?.warn?.('voz local: se agoto la espera de whisper', { waitedMs: now() - started });
+        return { ok: false, waitedMs: now() - started };
+      }
+      await sleep(checkMs);
+    }
+  }
 
   /** Escribe el buffer en una carpeta temporal y la borra al terminar. */
   async function withTempFile(buffer, extension, fn) {
@@ -176,8 +226,17 @@ export function createLocalEngine({
    * Transcripcion en espanol con whisper.cpp.
    * @returns {Promise<{ok: true, text: string} | {ok: false, error: string}>}
    */
-  async function transcribe({ buffer, mime }) {
+  async function transcribe({ buffer, mime, onQueued } = {}) {
     if (!audioEnabled) return { ok: false, error: 'voz-local-no-disponible' };
+    // Encola detras de la transcripcion propia anterior (nunca dos whisper nuestros a la vez).
+    const run = ownTranscription.then(() => transcribeWhenFree({ buffer, mime, onQueued }));
+    ownTranscription = run.catch(() => {});
+    return run;
+  }
+
+  async function transcribeWhenFree({ buffer, mime, onQueued }) {
+    const slot = await waitForWhisper({ onQueued });
+    if (!slot.ok) return { ok: false, error: 'whisper-ocupado' };
     const extension = EXTENSION_BY_MIME[mime] || 'ogg';
     const started = Date.now();
     return withTempFile(buffer, extension, async (input, dir) => {
@@ -223,5 +282,6 @@ export function createLocalEngine({
     binaries: { ocrBin, whisperBin, ffmpegBin, whisperModel },
     recognizeText,
     transcribe,
+    whisperBusy,
   };
 }
