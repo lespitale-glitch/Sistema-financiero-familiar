@@ -251,7 +251,7 @@ Para Supabase, ejecutar antes `supabase/schema.sql` en el SQL Editor del proyect
 | `LOCAL_WHISPER_THREADS` | No | `4` | Hilos de CPU para transcribir. |
 | `LOCAL_WHISPER_BIN` / `LOCAL_FFMPEG_BIN` | No | se buscan en `PATH` y Homebrew | Rutas explícitas si la app corre como servicio. |
 | `LOCAL_AI_TIMEOUT_MS` | No | `120000` | Tiempo máximo por archivo. |
-| `LOCAL_WHISPER_BUSY_PATTERN` | No | Canal7, subtítulos y Whisper en general | Procesos que indican que otro programa está usando Whisper (`pgrep -f -i`, solo lectura). |
+| `LOCAL_WHISPER_BUSY_PATTERN` | No | Canal7 (transcripción y auditorías), subtítulos y Whisper en general | Procesos que indican que otro programa está usando Whisper (`pgrep -f -i`, solo lectura). |
 | `LOCAL_WHISPER_MAX_WAIT_MIN` | No | `30` | Minutos máximos que un audio espera a que Whisper se libere. |
 | `LOCAL_WHISPER_CHECK_SECONDS` | No | `20` | Cada cuánto se vuelve a revisar. |
 

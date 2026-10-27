@@ -252,7 +252,7 @@ export function loadConfig(env = process.env, { loadEnvFile = false } = {}) {
         // Whisper compartido: solo transcribe si ningun otro proceso esta usando
         // Whisper (Canal7, subtitulos). Patron para `pgrep -f -i` (solo lectura).
         whisperBusyPattern: str(env.LOCAL_WHISPER_BUSY_PATTERN)
-          || 'whisper-cli|whisper-cpp|faster_whisper|mlx_whisper|fw_transcribe|transcribir_pendientes|subs_nocturno|generar_subs',
+          || 'whisper-cli|whisper-cpp|faster_whisper|mlx_whisper|fw_transcribe|transcribir_pendientes|subs_nocturno|generar_subs|correr_auditorias_pendientes|auditoria_canal7|reauditar|extraer_vtr',
         whisperMaxWaitMs: int(env.LOCAL_WHISPER_MAX_WAIT_MIN, 30, { min: 0, max: 720 }) * 60_000,
         whisperCheckMs: int(env.LOCAL_WHISPER_CHECK_SECONDS, 20, { min: 5, max: 600 }) * 1000,
       },
