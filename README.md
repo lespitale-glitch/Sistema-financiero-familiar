@@ -2,7 +2,7 @@
 
 Sistema financiero familiar autónomo con **bot de Telegram**, **OCR de facturas con Gemini**, **presupuestos y alertas**, **metas de ahorro/inversión**, **ingesta por email** y una **API HTTP** para integraciones.
 
-> **Estado:** 100 % listo para producción. Suite de 161 pruebas en verde y smoke test end-to-end exitoso (ver [Pruebas](#pruebas)).
+> **Estado:** listo para producción. Suite de pruebas con `node --test` y smoke test end-to-end (ver [Pruebas](#pruebas)).
 
 ---
 
@@ -212,7 +212,7 @@ Todas las variables se leen de `.env` (o del entorno del proceso). Las que no ti
 | `TELEGRAM_BOT_TOKEN` | Sí para el bot | vacío | Token de @BotFather. Sin él, el bot queda deshabilitado y la API sigue activa. |
 | `TELEGRAM_MODE` | No | `polling` | `polling` o `webhook`. |
 | `PUBLIC_URL` | Solo webhook | vacío | URL HTTPS pública, sin barra final. Ej.: `https://mi-app.onrender.com`. |
-| `TELEGRAM_WEBHOOK_SECRET` | Recomendada en webhook | vacío | Secreto que Telegram envía en `X-Telegram-Bot-Api-Secret-Token`. |
+| `TELEGRAM_WEBHOOK_SECRET` | **Sí en webhook** | vacío | Secreto que Telegram envía en `X-Telegram-Bot-Api-Secret-Token`. En modo webhook la app no arranca sin él. |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | No | vacío | Chat IDs extra autorizados, separados por coma. |
 
 ### Miembros de la familia
@@ -278,6 +278,7 @@ Para Supabase, ejecutar antes `supabase/schema.sql` en el SQL Editor del proyect
 | Variable | Requerida | Default | Descripción |
 |---|---|---|---|
 | `INGEST_RATE_LIMIT_PER_MINUTE` | No | `30` | Límite de solicitudes de ingesta por IP y minuto. `0` desactiva el límite. |
+| `TRUST_PROXY` | No | `1` | Saltos de proxy confiables para calcular la IP del cliente (`X-Forwarded-For`). `1` = un proxy delante (Render, Nginx). `false` si la app está expuesta directo. También acepta IPs/subredes (`loopback, 10.0.0.0/8`). **No usar `true`**: permite falsear la IP y evadir el rate limit. |
 
 ---
 
@@ -426,7 +427,7 @@ Los remitentes desconocidos se rechazan. Para autorizarlos, agregar su email en 
 ## Pruebas
 
 ```bash
-npm test          # 161 pruebas unitarias e integrales
+npm test          # pruebas unitarias e integrales (node --test)
 npm run smoke     # arranque real + endpoints principales
 npm run check     # sintaxis ESM + archivos de despliegue requeridos
 ```
@@ -434,8 +435,6 @@ npm run check     # sintaxis ESM + archivos de despliegue requeridos
 Resultado esperado de `npm test`:
 
 ```text
-ℹ tests 161
-ℹ pass 161
 ℹ fail 0
 ```
 
@@ -650,10 +649,13 @@ git push   # autoDeploy reconstruye el servicio
 - Usar un `API_TOKEN` largo y aleatorio (32 bytes hex).
 - Mantener `SUPABASE_SERVICE_ROLE_KEY` solo en el servidor.
 - Configurar `FAMILY_MEMBERS` en producción; el modo abierto permite auto-registro.
-- Usar `TELEGRAM_WEBHOOK_SECRET` en modo webhook y servir siempre por HTTPS.
+- En modo webhook `TELEGRAM_WEBHOOK_SECRET` es **obligatorio** (la validación de config bloquea el arranque) y se sirve siempre por HTTPS.
+- `TRUST_PROXY` (default `1`) define cuántos proxies se consideran confiables para la IP del cliente; así no se puede evadir el rate limit falseando `X-Forwarded-For`.
+- Los cuerpos JSON se limitan a 1 MB; solo `POST /api/email/inbound` acepta hasta 25 MB y recién después de validar el token.
 - El servidor aplica headers de seguridad, comparación de tokens en tiempo constante y rate limit de ingesta.
 - El logger redacta tokens, secretos, passwords y claves API.
 - Limitar el acceso al puerto con firewall si la API no necesita ser pública.
+- Revisar dependencias periódicamente con `npm audit`.
 
 ---
 
@@ -691,7 +693,7 @@ git push   # autoDeploy reconstruye el servicio
 │   ├── services/              # transacciones, alertas, OCR, email, scheduler
 │   ├── utils/                 # dinero, fechas, HTML de Telegram
 │   └── web/server.js          # Express: API y webhook
-├── tests/                     # 161 pruebas (node:test)
+├── tests/                     # pruebas (node:test)
 ├── scripts/
 │   ├── seed.js                # siembra categorías y miembros
 │   ├── smoke.js               # prueba de arranque end-to-end
@@ -705,7 +707,8 @@ git push   # autoDeploy reconstruye el servicio
 ├── .env.example
 ├── package.json
 ├── README.md
-└── AGENTS.md
+├── AGENTS.md                  # memoria técnica detallada
+└── CLAUDE.md                  # reglas para asistentes de IA
 ```
 
 ---

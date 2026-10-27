@@ -432,6 +432,55 @@ test('rate limit de ingesta corta en el limite configurado', async (t) => {
   assert.equal((await json(limited)).error, 'demasiadas-solicitudes');
 });
 
+test('rate limit no se evade falseando X-Forwarded-For (trust proxy = 1 salto)', async (t) => {
+  resetRateLimits();
+  const ctx = await setup({ env: { INGEST_RATE_LIMIT_PER_MINUTE: '2' } });
+  t.after(async () => {
+    const filePath = ctx.repos.store.filePath;
+    await ctx.web.stop();
+    await ctx.repos.close();
+    removeDb(filePath);
+    resetRateLimits();
+  });
+
+  // El atacante controla las entradas de la izquierda; el proxy real agrega la ultima.
+  const send = (fakeIp) => apiFetch(ctx.url, '/api/email/inbound', {
+    method: 'POST',
+    token: INGEST_TOKEN,
+    headers: { 'x-forwarded-for': `${fakeIp}, 203.0.113.7` },
+    body: { from: 'ana@example.com', text: 'Gasté 1000' },
+  });
+
+  assert.equal(ctx.config.api.trustProxy, 1);
+  assert.equal((await send('1.1.1.1')).status, 202);
+  assert.equal((await send('2.2.2.2')).status, 202);
+  assert.equal((await send('3.3.3.3')).status, 429);
+});
+
+test('body JSON mayor a 1 MB se rechaza fuera de la ingesta de email', async (t) => {
+  const ctx = await setup();
+  t.after(async () => {
+    const filePath = ctx.repos.store.filePath;
+    await ctx.web.stop();
+    await ctx.repos.close();
+    removeDb(filePath);
+  });
+
+  const big = await apiFetch(ctx.url, '/api/transactions', {
+    method: 'POST',
+    token: API_TOKEN,
+    body: { type: 'expense', amount: 100, description: 'x'.repeat(1_100_000) },
+  });
+  assert.equal(big.status, 413);
+
+  const email = await apiFetch(ctx.url, '/api/email/inbound', {
+    method: 'POST',
+    token: INGEST_TOKEN,
+    body: { from: 'ana@example.com', text: 'Gasté 1000', html: 'x'.repeat(1_100_000) },
+  });
+  assert.equal(email.status, 202);
+});
+
 test('GET /api/alerts devuelve alertas y presupuesto del mes', async (t) => {
   const ctx = await setup();
   t.after(async () => {

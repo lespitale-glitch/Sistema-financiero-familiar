@@ -41,7 +41,7 @@ import {
   progressBar,
   splitMessage,
 } from '../src/utils/telegram-html.js';
-import { loadConfig } from '../src/config.js';
+import { loadConfig, validateConfig } from '../src/config.js';
 import {
   DEFAULT_CATEGORIES,
   EXPENSE_TYPES,
@@ -191,6 +191,23 @@ test('loadConfig resuelve rutas relativas de SQLite contra el proyecto', () => {
   assert.ok(config.db.sqlitePath.indexOf('data/test.sqlite') > 0 || config.db.sqlitePath.endsWith('data\\test.sqlite'));
   const absolute = loadConfig({ SQLITE_PATH: ':memory:' }, { loadEnvFile: false });
   assert.equal(absolute.db.sqlitePath, ':memory:');
+});
+
+test('validateConfig exige TELEGRAM_WEBHOOK_SECRET en modo webhook', () => {
+  const base = { ...TEST_ENV, TELEGRAM_MODE: 'webhook', PUBLIC_URL: 'https://finanzas.example.com' };
+  const sinSecreto = validateConfig(loadConfig(base, { loadEnvFile: false }));
+  assert.ok(sinSecreto.errors.some((msg) => msg.includes('TELEGRAM_WEBHOOK_SECRET')));
+  const conSecreto = validateConfig(loadConfig({ ...base, TELEGRAM_WEBHOOK_SECRET: 's3cr3t' }, { loadEnvFile: false }));
+  assert.ok(!conSecreto.errors.some((msg) => msg.includes('TELEGRAM_WEBHOOK_SECRET')));
+});
+
+test('TRUST_PROXY: default 1 salto, acepta numeros, booleanos y listas', () => {
+  const parse = (value) => loadConfig({ ...TEST_ENV, TRUST_PROXY: value }, { loadEnvFile: false }).api.trustProxy;
+  assert.equal(loadConfig({ ...TEST_ENV }, { loadEnvFile: false }).api.trustProxy, 1);
+  assert.equal(parse('2'), 2);
+  assert.equal(parse('false'), false);
+  assert.equal(parse('true'), true);
+  assert.equal(parse('loopback, 10.0.0.0/8'), 'loopback, 10.0.0.0/8');
 });
 
 // ---------------------------------------------------------------------------

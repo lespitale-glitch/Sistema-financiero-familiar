@@ -2,7 +2,7 @@
 
 > **Estado:** ✅ **100 % listo para producción** (verificado el 2026-10-27).
 >
-> - `npm test`: **161 pruebas, 161 pass, 0 fail**.
+> - `npm test`: suite completa en verde (correr antes de cada commit).
 > - `node scripts/smoke.js`: **SMOKE OK** (9 pasos end-to-end).
 > - `node scripts/check.js`: sintaxis ESM y estructura de despliegue completas.
 >
@@ -33,7 +33,7 @@ Stack: **Node.js ESM**, Express, Telegraf, `dotenv`, `node:sqlite`, Gemini REST.
 1. **Dinero en centavos enteros.** Toda la persistencia usa `amount_cents`, `budget_cents`, `target_cents`. La conversión desde unidades ocurre en los bordes (`toCents`) y el formateo en `formatCents`.
 2. **Fechas ISO UTC.** La zona horaria solo se usa para calcular períodos y mostrar fechas (`TZ`, `REPORT_TIMEZONE`).
 3. **La app arranca sin servicios opcionales.** Si falta token de Telegram, Gemini o IMAP, solo se deshabilita esa función; se emiten warnings de configuración.
-4. **Errores de configuración bloqueantes:** token de Telegram con formato inválido, webhook sin `PUBLIC_URL`/HTTPS, Supabase sin URL o key, Telegram IDs duplicados.
+4. **Errores de configuración bloqueantes:** token de Telegram con formato inválido, webhook sin `PUBLIC_URL`/HTTPS o sin `TELEGRAM_WEBHOOK_SECRET`, Supabase sin URL o key, Telegram IDs duplicados.
 5. **Identidad estricta si `FAMILY_MEMBERS` está configurado.** Un usuario desconocido recibe su Telegram ID y no puede operar. Si la lista está vacía, el modo es abierto y auto-registra.
 6. **Categorías:** resolución por `categoryId`, nombre, o fallback por tipo (`Otros`, `Otros ingresos`, `Inversiones`).
 7. **Alertas deduplicadas** por categoría + umbral + período mediante `repos.alerts.claim`.
@@ -169,7 +169,7 @@ Se leen de `.env` o del entorno. `.env.example` es la plantilla oficial.
 | `TELEGRAM_BOT_TOKEN` | Sí para bot | vacío | Token de @BotFather. Sin él, bot deshabilitado. |
 | `TELEGRAM_MODE` | No | `polling` | `polling` o `webhook`. |
 | `PUBLIC_URL` | Solo webhook | vacío | URL HTTPS sin barra final. |
-| `TELEGRAM_WEBHOOK_SECRET` | Recomendada en webhook | vacío | Secreto del header `X-Telegram-Bot-Api-Secret-Token`. |
+| `TELEGRAM_WEBHOOK_SECRET` | Sí en webhook | vacío | Secreto del header `X-Telegram-Bot-Api-Secret-Token`. Error bloqueante si falta en webhook. |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | No | vacío | IDs extra autorizados, separados por coma. |
 
 ### Familia
@@ -233,6 +233,7 @@ Roles: `husband`, `wife`, `daughter`, `son`, `other`.
 | Variable | Requerida | Default | Descripción |
 |---|---|---|---|
 | `INGEST_RATE_LIMIT_PER_MINUTE` | No | `30` | Límite por IP/minuto. `0` lo desactiva. |
+| `TRUST_PROXY` | No | `1` | Valor de Express `trust proxy` (saltos, `true`/`false` o lista de IPs). Nunca `true` en producción. |
 
 ---
 
@@ -352,7 +353,7 @@ Cobertura funcional actual:
 - Web/API (12 pruebas).
 - Reportes y smoke.
 
-Resultado: **161 pass / 0 fail**; smoke **9/9 pasos**.
+Resultado esperado: **0 fail**; smoke **9/9 pasos**.
 
 ### Notas de entorno de pruebas
 
@@ -411,7 +412,9 @@ journalctl -u finanzas -f
 - `.env` fuera de git (`.gitignore` y `.dockerignore`).
 - `API_TOKEN` de 32 bytes; comparación en tiempo constante.
 - `SUPABASE_SERVICE_ROLE_KEY` solo backend.
-- Webhook con secreto y HTTPS.
+- Webhook con secreto obligatorio y HTTPS.
+- `trust proxy` acotado (`TRUST_PROXY`, default 1 salto): la IP del rate limit no se puede falsear.
+- Body JSON 1 MB global; 25 MB solo en ingesta de email, después de validar el token.
 - `FAMILY_MEMBERS` obligatorio en producción.
 - Rate limit de ingesta.
 - Redacción de secretos en logs.
@@ -433,7 +436,7 @@ journalctl -u finanzas -f
 
 ## 13. Checklist de producción
 
-- [x] 161 pruebas en verde.
+- [x] Suite de pruebas en verde.
 - [x] Smoke test end-to-end en verde.
 - [x] `node:sqlite` sin dependencias nativas.
 - [x] `Dockerfile` multi-stage innecesario (sin build), non-root, healthcheck y volumen.

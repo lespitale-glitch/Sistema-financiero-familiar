@@ -13,6 +13,7 @@ import {
 
 const RATE_WINDOW_MS = 60_000;
 const RATE_PRUNE_EVERY = 200;
+const EMAIL_INBOUND_PATH = '/api/email/inbound';
 
 /** Ventanas deslizantes de ingesta, compartidas por instancia (key: IP). */
 const ingestHits = new Map();
@@ -99,8 +100,12 @@ export function createWebServer({ config, repos, services, logger, bot = null })
 
   const app = express();
   app.disable('x-powered-by');
-  app.set('trust proxy', true);
-  app.use(express.json({ limit: '25mb' }));
+  app.set('trust proxy', config.api?.trustProxy ?? 1);
+  // Body chico por defecto; la ingesta de email (adjuntos base64) tiene su
+  // propio parser de 25 MB que corre recien despues de validar el token.
+  const jsonDefault = express.json({ limit: '1mb' });
+  const jsonEmail = express.json({ limit: '25mb' });
+  app.use((req, res, next) => (req.path === EMAIL_INBOUND_PATH ? next() : jsonDefault(req, res, next)));
 
   // Identificador de request + cabeceras de seguridad + cache de API.
   app.use((req, res, next) => {
@@ -288,7 +293,7 @@ export function createWebServer({ config, repos, services, logger, bot = null })
   // ---------------------------------------------------------------------------
   // Ingesta de email
   // ---------------------------------------------------------------------------
-  app.post('/api/email/inbound', requireIngestToken, ingestRateLimit, route(async (req, res) => {
+  app.post(EMAIL_INBOUND_PATH, requireIngestToken, ingestRateLimit, jsonEmail, route(async (req, res) => {
     const payload = req.body || {};
     if (!payload.from || String(payload.from).trim() === '') {
       res.status(400).json({ error: 'from-requerido', message: 'El email debe incluir remitente ("from").' });

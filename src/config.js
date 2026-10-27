@@ -29,6 +29,21 @@ function bool(value, fallback = false) {
   return fallback;
 }
 
+/**
+ * Valor de Express "trust proxy". Default 1 (un proxy delante: Render, Nginx).
+ * Nunca usar `true` en produccion: cualquiera podria falsear X-Forwarded-For
+ * y evadir el rate limit por IP.
+ */
+function parseTrustProxy(value) {
+  const text = str(value, '1').toLowerCase();
+  if (['false', 'no', 'off', '0'].includes(text)) return false;
+  if (['true', 'yes', 'on'].includes(text)) return true;
+  const hops = Number.parseInt(text, 10);
+  if (Number.isInteger(hops) && hops > 0 && String(hops) === text) return hops;
+  // Lista de IPs/subredes o presets de Express (loopback, uniquelocal...).
+  return str(value);
+}
+
 function list(value) {
   return str(value)
     .split(/[,;\n]/)
@@ -157,6 +172,7 @@ export function loadConfig(env = process.env, { loadEnvFile = false } = {}) {
       emailIngestToken,
       enabled: Boolean(apiToken),
       rateLimitPerMinute: int(env.INGEST_RATE_LIMIT_PER_MINUTE, 30, { min: 0, max: 10000 }),
+      trustProxy: parseTrustProxy(env.TRUST_PROXY),
     },
     email: {
       forwardAddress: str(env.EMAIL_FORWARD_ADDRESS) || null,
@@ -202,7 +218,9 @@ export function validateConfig(config) {
   }
   if (config.telegram.mode === 'webhook') {
     if (!config.telegram.publicUrl) errors.push('TELEGRAM_MODE=webhook requiere PUBLIC_URL.');
-    if (!config.telegram.webhookSecret) warnings.push('TELEGRAM_WEBHOOK_SECRET vacio: el webhook aceptara cualquier origen.');
+    if (!config.telegram.webhookSecret) {
+      errors.push('TELEGRAM_MODE=webhook requiere TELEGRAM_WEBHOOK_SECRET (sin el, cualquiera podria enviar updates falsos).');
+    }
     if (config.telegram.publicUrl && !config.telegram.publicUrl.startsWith('https://')) {
       errors.push('PUBLIC_URL debe ser HTTPS para webhooks de Telegram.');
     }
