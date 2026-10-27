@@ -25,6 +25,43 @@ const HTML_OPTS = Object.freeze({ parse_mode: 'HTML', disable_web_page_preview: 
  * @param {object} deps
  * @returns {(ctx: object, next: Function) => Promise<unknown>}
  */
+/** Tipo de mensaje recibido, para el log. */
+function describeUpdate(ctx) {
+  const message = ctx?.message || ctx?.editedMessage || null;
+  if (ctx?.callbackQuery) return { kind: 'boton' };
+  if (!message) return { kind: ctx?.updateType || 'otro' };
+  if (typeof message.text === 'string') {
+    const command = /^\/([a-z_]+)/i.exec(message.text);
+    return command ? { kind: 'comando', command: command[1].toLowerCase() } : { kind: 'texto' };
+  }
+  if (message.photo) return { kind: 'foto' };
+  if (message.voice || message.audio) return { kind: 'audio' };
+  if (message.document) return { kind: 'archivo', mime: message.document.mime_type || null };
+  return { kind: ctx?.updateType || 'otro' };
+}
+
+/**
+ * Deja una linea en el log por cada update de Telegram (tipo, chat, usuario,
+ * duracion). No guarda el texto del mensaje.
+ */
+export function createUpdateLogger(logger) {
+  return async function updateLogger(ctx, next) {
+    const started = Date.now();
+    const info = {
+      ...describeUpdate(ctx),
+      chatType: ctx?.chat?.type || null,
+      chatId: ctx?.chat?.id ?? null,
+      fromId: ctx?.from?.id ?? null,
+    };
+    logger?.info?.('telegram: recibido', info);
+    try {
+      return await next();
+    } finally {
+      logger?.debug?.('telegram: procesado', { ...info, ms: Date.now() - started });
+    }
+  };
+}
+
 export function createAuthMiddleware(deps) {
   return async function authMiddleware(ctx, next) {
     if (!ctx?.from?.id) return next();
@@ -49,6 +86,11 @@ export function createAuthMiddleware(deps) {
     ctx.state.resolved = resolved;
 
     if (!resolved?.ok) {
+      deps.logger?.warn?.('telegram: usuario no autorizado', {
+        reason: resolved?.reason || null,
+        fromId: ctx.from.id,
+        chatId: ctx.chat?.id ?? null,
+      });
       ctx.state.user = undefined;
       try {
         if (typeof ctx.reply === 'function') {
@@ -115,7 +157,9 @@ export function createBot({ config, repos, services, logger, notifier, botOption
   const bot = new Telegraf(config.telegram.token, botOptions);
   const deps = { config, repos, services, logger, notifier };
 
-  // La autenticacion va primero: ningun handler corre sin ctx.state.user.
+  // Primero se registra cada update en el log (sin el contenido del mensaje),
+  // despues la autenticacion: ningun handler corre sin ctx.state.user.
+  bot.use(createUpdateLogger(logger));
   bot.use(createAuthMiddleware(deps));
   registerHandlers(bot, deps);
 

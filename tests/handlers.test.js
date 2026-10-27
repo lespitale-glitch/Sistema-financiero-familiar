@@ -416,3 +416,24 @@ test('/gastos filtra por categoria', async (t) => {
   assert.match(text, /15\.000/);
   assert.match(text, /Supermercado/);
 });
+
+test('cada update queda en el log sin el texto del mensaje', async () => {
+  const { createUpdateLogger } = await import('../src/bot/index.js');
+  const lines = [];
+  const logger = { info: (msg, data) => lines.push({ msg, data }), debug: () => {} };
+  const middleware = createUpdateLogger(logger);
+  let called = false;
+  await middleware({
+    updateType: 'message',
+    chat: { id: 5, type: 'private' },
+    from: { id: 119 },
+    message: { text: '/balance octubre' },
+  }, async () => { called = true; });
+  await middleware({ updateType: 'message', chat: { id: -100, type: 'group' }, from: { id: 7 }, message: { photo: [{}] } }, async () => {});
+  await middleware({ updateType: 'message', chat: { id: 5, type: 'private' }, from: { id: 7 }, message: { text: 'gasté 100 en pan' } }, async () => {});
+  assert.equal(called, true);
+  assert.deepEqual(lines.map((line) => line.data.kind), ['comando', 'foto', 'texto']);
+  assert.equal(lines[0].data.command, 'balance');
+  assert.equal(lines[1].data.chatType, 'group');
+  assert.ok(!JSON.stringify(lines).includes('pan'), 'no guarda el texto');
+});

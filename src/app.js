@@ -126,7 +126,8 @@ export async function createApp({ env = process.env, loadEnvFile = true, logger 
       }
     } else if (bot) {
       try {
-        await bot.telegram.setWebhook('', { drop_pending_updates: true });
+        // Sin descartar pendientes: lo que llego mientras el bot reiniciaba se procesa igual.
+        await bot.telegram.setWebhook('', { drop_pending_updates: false });
       } catch {
         // sin red al arrancar no debe tumbar la app: launch lo reintenta
       }
@@ -136,7 +137,17 @@ export async function createApp({ env = process.env, loadEnvFile = true, logger 
     // llama por HTTP. `bot.launch` no lanza si Telegram falla: lo dejamos en
     // estado degrado y la app sigue con la API web.
     if (bot && config.telegram.mode === 'polling') {
-      bot.launch(() => {}).catch?.(() => {});
+      bot.launch(() => log.info('telegram: polling activo, esperando mensajes')).catch?.((error) => {
+        const conflict = /409|conflict/i.test(String(error?.message || error?.description || ''));
+        log.error('telegram: el polling se detuvo', {
+          error,
+          hint: conflict
+            ? 'Otro proceso esta usando el mismo token de bot (dos instancias corriendo). Dejar una sola.'
+            : 'Fallo la conexion con Telegram. El proceso se reinicia para reintentar.',
+        });
+        // Sin polling el bot queda sordo: salir y que launchd/systemd/Docker lo reinicie.
+        setTimeout(() => process.kill(process.pid, 'SIGTERM'), 1000).unref?.();
+      });
     }
 
     await scheduler.start();
