@@ -1,0 +1,41 @@
+# Servicio systemd para Finanzas Familiares.
+# Copiar a /etc/systemd/system/finanzas.service  y ajustar:
+#   - Usuario, Directory y EnvironmentFile
+#   - systemctl daemon-reload && systemctl enable --now finanzas
+[Unit]
+Description=Finanzas Familiares (bot de Telegram + API web)
+Documentation=https://github.com/tu-usuario/finanzas-familiares
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Directorio del proyecto (donde esta src/, package.json, .env)
+WorkingDirectory=/opt/finanzas
+EnvironmentFile=/opt/finanzas/.env
+ExecStart=/usr/bin/node src/index.js
+Restart=on-failure
+RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Hardening
+User=finanzas
+Group=finanzas
+NoNewPrivileges=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/opt/finanzas/data
+PrivateTmp=true
+
+# Senales de apagado limpio (el proceso escucha SIGINT/SIGTERM)
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# Logs
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=finanzas
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,75 @@
+# Finanzas Familiares en Render - servicio web con disco persistente.
+# El bot corre en modo polling por defecto (una sola instancia, siempre activa).
+# Para webhook: TELEGRAM_MODE=webhook y PUBLIC_URL=https://<servicio>.onrender.com
+#
+# Despliegue: Render Dashboard > New > Blueprint > seleccionar el repositorio.
+# Las variables marcadas con sync: false se completan en el dashboard.
+services:
+  - type: web
+    name: finanzas-familiares
+    runtime: node
+    plan: starter
+    numInstances: 1
+    buildCommand: npm install --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    autoDeploy: true
+    disk:
+      name: finanzas-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "24.11.0"
+      - key: SQLITE_PATH
+        value: /app/data/finanzas.sqlite
+      - key: DB_DRIVER
+        value: sqlite
+      - key: TZ
+        value: America/Argentina/Buenos_Aires
+      - key: REPORT_TIMEZONE
+        value: America/Argentina/Buenos_Aires
+      - key: CURRENCY
+        value: ARS
+      - key: LOCALE
+        value: es-AR
+      - key: LOG_LEVEL
+        value: info
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_MODE
+        value: polling
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+      - key: FAMILY_MEMBERS
+        sync: false
+      - key: FAMILY_CHAT_ID
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: API_TOKEN
+        generateValue: true
+      - key: EMAIL_INGEST_TOKEN
+        generateValue: true
+      - key: BUDGET_ALERT_THRESHOLDS
+        value: "80,100"
+      - key: ALERTS_ENABLED
+        value: "true"
+      - key: ALERT_AUTHOR_DM
+        value: "true"
+      - key: DAILY_SUMMARY_AT
+        value: "21:00"
+      - key: WEEKLY_SUMMARY_DAY
+        value: "1"
+      - key: WEEKLY_SUMMARY_AT
+        value: "09:00"
+      - key: MONTHLY_SUMMARY_AT
+        value: "08:00"
+      - key: MAX_UPLOAD_BYTES
+        value: "10485760"
+      - key: INGEST_RATE_LIMIT_PER_MINUTE
+        value: "30"

@@ -1,0 +1,29 @@
+# Dependencias y artefactos locales: se instalan dentro de la imagen.
+node_modules
+npm-debug.log*
+coverage
+.nyc_output
+
+# Secretos y configuracion local (se inyectan por env_file / dashboard).
+.env
+.env.*
+!.env.example
+
+# Datos y estado persistente.
+data
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+tmp
+uploads
+
+# Control de versiones, editores y documentacion.
+.git
+.gitignore
+.idea
+.vscode
+*.md
+
+# Pruebas: no se necesitan en la imagen de produccion.
+tests

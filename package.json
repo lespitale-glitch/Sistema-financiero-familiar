@@ -1,0 +1,39 @@
+{
+  "name": "finanzas-familiares",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Sistema financiero familiar autonomo con bot de Telegram, OCR de facturas (Gemini), presupuestos, alertas e inversion.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test \"tests/*.test.js\"",
+    "test:coverage": "node --test --experimental-test-coverage \"tests/*.test.js\"",
+    "seed": "node scripts/seed.js",
+    "smoke": "node scripts/smoke.js",
+    "check": "node scripts/check.js"
+  },
+  "keywords": [
+    "telegram-bot",
+    "personal-finance",
+    "family-budget",
+    "gemini",
+    "ocr",
+    "sqlite",
+    "supabase"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "telegraf": "^4.16.3"
+  },
+  "optionalDependencies": {
+    "imapflow": "^1.0.171",
+    "mailparser": "^3.7.2"
+  }
+}
