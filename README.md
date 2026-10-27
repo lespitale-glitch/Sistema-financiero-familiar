@@ -455,6 +455,17 @@ AI_PROVIDER=local
 
 Consumo: no queda nada corriendo en segundo plano. Cada foto tarda 1 o 2 segundos. Cada audio levanta whisper unos segundos y usa ~500 MB de RAM mientras transcribe. Para usar menos RAM: `WHISPER_MODEL=base npm run setup:mac` y `LOCAL_WHISPER_MODEL=models/ggml-base.bin` (menos preciso).
 
+Para que quede siempre prendido (arranca solo al iniciar sesión y se reinicia si se cae), como LaunchAgent propio `com.finanzas-familiares.bot`:
+
+```bash
+npm run servicio:instalar   # verifica el .env y el puerto, crea el LaunchAgent y comprueba /healthz
+npm run servicio:estado     # estado + últimas líneas de logs/finanzas.log
+npm run servicio:reiniciar  # después de un git pull o de cambiar el .env
+npm run servicio:quitar     # lo detiene y borra solo su LaunchAgent
+```
+
+Corre con `nice 10` (baja prioridad, para no competir con otros servicios) y su log queda en `logs/finanzas.log`.
+
 Limitaciones frente a Gemini:
 
 - Las reglas encuentran bien "Total a pagar", "Importe total", "TOTAL" y los vencimientos, pero un formato muy raro puede requerir `/corregir`. La vista previa siempre muestra lo detectado antes de confirmar.

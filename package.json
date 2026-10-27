@@ -16,7 +16,11 @@
     "seed": "node scripts/seed.js",
     "smoke": "node scripts/smoke.js",
     "check": "node scripts/check.js",
-    "setup:mac": "bash scripts/setup-mac.sh"
+    "setup:mac": "bash scripts/setup-mac.sh",
+    "servicio:instalar": "bash scripts/mac-servicio.sh instalar",
+    "servicio:estado": "bash scripts/mac-servicio.sh estado",
+    "servicio:reiniciar": "bash scripts/mac-servicio.sh reiniciar",
+    "servicio:quitar": "bash scripts/mac-servicio.sh quitar"
   },
   "keywords": [
     "telegram-bot",

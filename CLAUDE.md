@@ -45,7 +45,7 @@ src/
   web/server.js   Express: /healthz, /readyz, /api/*, webhook de Telegram, ingesta de email
 bin/macos/        finanzas-ocr.swift (el binario compilado y models/ no se suben)
 tests/            node:test; helpers en tests/helpers/
-scripts/          check, seed, smoke, setup-mac.sh
+scripts/          check, seed, smoke, setup-mac.sh, mac-servicio.sh (LaunchAgent)
 deploy/systemd/   unidad systemd
 supabase/         schema.sql para Supabase
 ```
