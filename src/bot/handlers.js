@@ -33,8 +33,10 @@ import {
   progressBar,
 } from '../utils/telegram-html.js';
 import { documentKeyboard, parseDocumentCallback } from './keyboards.js';
+import { parseBillCallback, parseBillCommand } from '../services/bills.js';
 import {
   hasMoneySignal,
+  matchCategory,
   parseBudgetUpdate,
   parseCategoryCreation,
   parseContribution,
@@ -267,10 +269,30 @@ async function loadSummaryFor(deps, transaction) {
  */
 async function createFromParsed(ctx, deps, parsed, { source = 'text', metadata = {} } = {}) {
   const user = ctx.state?.user || null;
-  const result = await deps.services.transactions.create({
+  let result;
+  try {
+    result = await createParsedTransaction(deps, user, parsed, { source, metadata });
+  } catch (error) {
+    if (error?.code !== 'FX_UNAVAILABLE') throw error;
+    return {
+      result: null,
+      summary: null,
+      text: [
+        `💱 ${escapeHtml(error.message)}`,
+        '',
+        'Ejemplo en pesos: <code>Gasté 15.000 en Netflix</code>',
+      ].join('\n'),
+    };
+  }
+  return confirmationFor(deps, user, result);
+}
+
+async function createParsedTransaction(deps, user, parsed, { source, metadata }) {
+  return deps.services.transactions.create({
     user,
     type: parsed.type,
     amountCents: parsed.amountCents,
+    currency: parsed.currency || currencyOf(deps),
     category: parsed.category?.name || parsed.categoryName || (typeof parsed.category === 'string' ? parsed.category : null),
     note: parsed.note || '',
     source,
@@ -281,7 +303,9 @@ async function createFromParsed(ctx, deps, parsed, { source = 'text', metadata =
       ...(parsed.tags?.length ? { tags: parsed.tags } : {}),
     },
   });
+}
 
+async function confirmationFor(deps, user, result) {
   const summary = result.alertResult?.summary || await loadSummaryFor(deps, result.transaction);
   let text = buildTransactionConfirmation({
     transaction: result.transaction,
@@ -369,6 +393,12 @@ export const handleHelp = safe('help', async (ctx, deps) => {
     '• /categorias — listar categorías activas',
     '• /nueva_categoria <code>Nombre | tipo | presupuesto</code>',
     '• /presupuesto_set <code>&lt;categoría|general&gt; &lt;monto&gt;</code>',
+    '',
+    '<b>Vencimientos</b>',
+    '• /vencimientos — lo que hay que pagar (con botones de pagado)',
+    '• /vence <code>&lt;fecha&gt; [monto] &lt;nombre&gt; [#mensual]</code>',
+    '• /pagado <code>&lt;número&gt;</code> — marcar como pagado',
+    '• Las fotos/PDF de facturas con vencimiento se agendan solas',
     '',
     '<b>Metas</b>',
     '• /metas — listar metas y progreso',
@@ -1161,11 +1191,11 @@ export const handleVoice = safe('voice', async (ctx, deps) => {
   if (!voice) return;
 
   const ocr = deps.services.ocr;
-  if (!ocr?.enabled) {
+  if (!(ocr?.audioEnabled ?? ocr?.enabled)) {
     await replyHtml(ctx, [
       '🎙️ La transcripción de voz está desactivada.',
       '',
-      'Configurá <code>GEMINI_API_KEY</code> para activarla o escribí el movimiento:',
+      'Activala con <code>AI_PROVIDER=local</code> (Mac, whisper.cpp) o <code>GEMINI_API_KEY</code>, o escribí el movimiento:',
       '<code>Gasté 15.000 en el super</code>',
     ].join('\n'));
     return;
@@ -1220,11 +1250,11 @@ export const handleDocument = safe('document', async (ctx, deps) => {
   if (!photo && !document) return;
 
   const ocr = deps.services.ocr;
-  if (!ocr?.enabled) {
+  if (!(ocr?.documentsEnabled ?? ocr?.enabled)) {
     await replyHtml(ctx, [
       '📄 El OCR de facturas está desactivado.',
       '',
-      'Configurá <code>GEMINI_API_KEY</code> para leer imágenes, o cargá el gasto a mano:',
+      'Activalo con <code>AI_PROVIDER=local</code> (Mac) o <code>GEMINI_API_KEY</code>, o cargá el gasto a mano:',
       '<code>/gasto 15000 servicios factura de luz</code>',
     ].join('\n'));
     return;
@@ -1304,6 +1334,10 @@ export const handleDocument = safe('document', async (ctx, deps) => {
     currency: currencyOf(deps),
     locale: localeOf(deps),
   });
+  const bill = await trackBill(deps, created);
+  if (bill) {
+    text += `\n\n⏰ Te recuerdo el vencimiento del <b>${escapeHtml(formatYmd(bill.dueDate))}</b> hasta que lo marques como pagado.`;
+  }
   if (!created.totalCents) {
     text += '\n\n⚠️ No detecté el monto. Usá <code>/corregir &lt;monto&gt;</code> antes de confirmar.';
   } else {
@@ -1319,6 +1353,11 @@ export const handleDocument = safe('document', async (ctx, deps) => {
 
 export const handleCallbackQuery = safe('callback', async (ctx, deps) => {
   const data = ctx.callbackQuery?.data ?? (Array.isArray(ctx.match) ? ctx.match[0] : '');
+  const billAction = parseBillCallback(data);
+  if (billAction) {
+    await handleBillPaidCallback(ctx, deps, billAction.billId);
+    return;
+  }
   const parsed = parseDocumentCallback(data);
   if (!parsed) {
     await answerCallback(ctx, 'Acción no reconocida');
@@ -1336,7 +1375,14 @@ export const handleCallbackQuery = safe('callback', async (ctx, deps) => {
   const user = ctx.state?.user || null;
 
   if (parsed.action === 'confirm') {
-    const result = await deps.services.transactions.confirmDocument({ documentId: document.id, user });
+    let result;
+    try {
+      result = await deps.services.transactions.confirmDocument({ documentId: document.id, user });
+    } catch (error) {
+      if (error?.code !== 'FX_UNAVAILABLE') throw error;
+      await answerCallback(ctx, error.message.slice(0, 190), { show_alert: true });
+      return;
+    }
     if (!result?.ok) {
       await answerCallback(ctx, result?.message || 'No pude confirmar el documento.', { show_alert: true });
       return;
@@ -1362,6 +1408,11 @@ export const handleCallbackQuery = safe('callback', async (ctx, deps) => {
     if (!result?.ok) {
       await answerCallback(ctx, 'No pude descartar el documento.', { show_alert: true });
       return;
+    }
+    try {
+      await deps.services.bills?.cancelForDocument?.(document.id);
+    } catch (error) {
+      deps.logger?.warn?.('no pude cancelar el vencimiento del documento', { documentId: document.id, error });
     }
     await editHtml(ctx, deps, '🗑️ <b>Documento descartado</b>\n\nNo se registró ningún movimiento.');
     await answerCallback(ctx, 'Descartado');
@@ -1470,7 +1521,11 @@ export const handleCorrect = safe('corregir', async (ctx, deps) => {
   }
 
   const patch = {};
-  if (Number.isSafeInteger(amountCents) && amountCents > 0) patch.totalCents = amountCents;
+  if (Number.isSafeInteger(amountCents) && amountCents > 0) {
+    patch.totalCents = amountCents;
+    // El monto corregido esta en la moneda que escribio el usuario (pesos salvo "usd 15").
+    patch.currency = parsed?.ok && parsed.currency ? parsed.currency : currencyOf(deps);
+  }
   if (category) patch.categoryId = category.id;
 
   const extracted = {
@@ -1481,6 +1536,7 @@ export const handleCorrect = safe('corregir', async (ctx, deps) => {
   patch.extracted = extracted;
 
   const updated = await deps.repos.documents.update(document.id, patch);
+  await syncBill(deps, updated);
   const effectiveCategory = category
     || (updated.categoryId ? await deps.repos.categories.get(updated.categoryId) : null);
 
@@ -1496,6 +1552,137 @@ export const handleCorrect = safe('corregir', async (ctx, deps) => {
     reply_markup: documentKeyboard(updated.id),
   });
 });
+
+// ---------------------------------------------------------------------------
+// Vencimientos: /vencimientos, /vence, /pagado y boton "Pagué"
+// ---------------------------------------------------------------------------
+
+/** 2026-11-15 -> 15/11/2026 */
+function formatYmd(ymd) {
+  const [year, month, day] = String(ymd || '').split('-');
+  return year && month && day ? `${day}/${month}/${year}` : String(ymd || '');
+}
+
+/** Agenda el vencimiento de una factura sin cortar el flujo si falla. */
+async function trackBill(deps, document) {
+  if (!document?.dueDate || typeof deps.services.bills?.trackDocument !== 'function') return null;
+  try {
+    return await deps.services.bills.trackDocument(document);
+  } catch (error) {
+    deps.logger?.warn?.('no pude agendar el vencimiento de la factura', { documentId: document.id, error });
+    return null;
+  }
+}
+
+async function syncBill(deps, document) {
+  if (typeof deps.services.bills?.syncDocument !== 'function') return;
+  try {
+    await deps.services.bills.syncDocument(document);
+  } catch (error) {
+    deps.logger?.warn?.('no pude actualizar el vencimiento de la factura', { documentId: document?.id, error });
+  }
+}
+
+function billsDisabled(deps) {
+  return typeof deps.services.bills?.buildListMessage !== 'function';
+}
+
+function paidMessage(deps, result) {
+  const bills = deps.services.bills;
+  const lines = [`✅ <b>Pagado:</b> ${escapeHtml(result.bill.name)} — ${escapeHtml(bills.amountLabel(result.bill))}`];
+  if (result.next) {
+    lines.push(`🔁 Próximo vencimiento agendado: <b>${escapeHtml(formatYmd(result.next.dueDate))}</b>`);
+  }
+  return lines.join('\n');
+}
+
+export const handleBills = safe('vencimientos', async (ctx, deps) => {
+  if (billsDisabled(deps)) {
+    await replyHtml(ctx, '📅 Los vencimientos no están disponibles.');
+    return;
+  }
+  const { html, keyboard } = await deps.services.bills.buildListMessage({ at: now(deps) });
+  await replyHtml(ctx, html, keyboard ? { reply_markup: keyboard } : {});
+});
+
+export const handleNewBill = safe('vence', async (ctx, deps) => {
+  if (billsDisabled(deps)) {
+    await replyHtml(ctx, '📅 Los vencimientos no están disponibles.');
+    return;
+  }
+  const bills = deps.services.bills;
+  const parsed = parseBillCommand(ctx.payload, { todayKey: bills.todayKey(now(deps)) });
+  if (!parsed.ok) {
+    await replyHtml(ctx, [
+      '📅 <b>Cargar un vencimiento</b>',
+      '',
+      'Formato: <code>/vence &lt;fecha&gt; [monto] &lt;nombre&gt; [#mensual]</code>',
+      '',
+      'Ejemplos:',
+      '• <code>/vence 15/11 45000 Luz Edesur</code>',
+      '• <code>/vence 10 350000 Alquiler #mensual</code> (todos los días 10)',
+      '• <code>/vence 2026-12-01 Patente</code> (sin monto)',
+    ].join('\n'));
+    return;
+  }
+  const categories = await deps.repos.categories.list();
+  const category = matchCategory(parsed.name, categories);
+  const bill = await bills.add({
+    name: parsed.name,
+    amountCents: parsed.amountCents,
+    dueDate: parsed.dueDate,
+    recurrence: parsed.recurrence,
+    userId: ctx.state?.user?.id || null,
+    categoryId: category?.id || null,
+  });
+  await replyHtml(ctx, [
+    '📅 <b>Vencimiento agendado</b>',
+    '',
+    `${escapeHtml(bill.name)}${bill.recurrence ? ' 🔁 mensual' : ''}`,
+    `Vence: <b>${escapeHtml(formatYmd(bill.dueDate))}</b>`,
+    `Monto: <b>${escapeHtml(bills.amountLabel(bill))}</b>`,
+    '',
+    'Te aviso antes y el mismo día. Ver todos: /vencimientos',
+  ].join('\n'));
+});
+
+export const handlePaid = safe('pagado', async (ctx, deps) => {
+  if (billsDisabled(deps)) {
+    await replyHtml(ctx, '📅 Los vencimientos no están disponibles.');
+    return;
+  }
+  const reference = String(ctx.payload || '').trim();
+  if (!reference) {
+    const { html, keyboard } = await deps.services.bills.buildListMessage({ at: now(deps) });
+    await replyHtml(ctx, `${html}\n\nUsá <code>/pagado &lt;número&gt;</code>.`, keyboard ? { reply_markup: keyboard } : {});
+    return;
+  }
+  const bill = await deps.services.bills.resolveReference(reference, { at: now(deps) });
+  if (!bill) {
+    await replyHtml(ctx, `❌ No encontré el vencimiento <b>${escapeHtml(reference)}</b>. Mirá la lista con /vencimientos.`);
+    return;
+  }
+  const result = await deps.services.bills.markPaid(bill.id, { at: now(deps) });
+  if (!result.ok) {
+    await replyHtml(ctx, `ℹ️ <b>${escapeHtml(bill.name)}</b> ya estaba marcado como ${bill.status === 'paid' ? 'pagado' : 'cancelado'}.`);
+    return;
+  }
+  await replyHtml(ctx, paidMessage(deps, result));
+});
+
+async function handleBillPaidCallback(ctx, deps, billId) {
+  if (billsDisabled(deps)) {
+    await answerCallback(ctx, 'Vencimientos no disponibles.');
+    return;
+  }
+  const result = await deps.services.bills.markPaid(billId, { at: now(deps) });
+  if (!result.ok) {
+    await answerCallback(ctx, result.reason === 'not-found' ? 'No encontré el vencimiento.' : 'Ya estaba marcado.');
+    return;
+  }
+  await answerCallback(ctx, '✅ Marcado como pagado');
+  await replyHtml(ctx, paidMessage(deps, result));
+}
 
 // ---------------------------------------------------------------------------
 // Comando desconocido

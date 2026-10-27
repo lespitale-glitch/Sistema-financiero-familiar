@@ -23,14 +23,14 @@ export function createScheduler({ config, repos, services, notifier, logger, clo
   let lastRuns = [];
 
   /** Envia un resumen; nunca propaga errores del notificador. */
-  async function sendSummary(jobName, html) {
+  async function sendSummary(jobName, html, extra = {}) {
     const chatId = config.telegram?.familyChatId;
     if (!chatId) {
       logger?.warn?.('scheduler: resumen sin chat familiar configurado', { job: jobName });
       return { sent: false, reason: 'sin-destino' };
     }
     try {
-      const result = await notifier.sendMessage(String(chatId), html);
+      const result = await notifier.sendMessage(String(chatId), html, extra);
       if (result?.ok === false) {
         logger?.warn?.('scheduler: el resumen no se pudo enviar', {
           job: jobName,
@@ -138,6 +138,15 @@ export function createScheduler({ config, repos, services, notifier, logger, clo
     return sendSummary('monthly', html);
   }
 
+  /** Recordatorio de vencimientos (vencidos + proximos segun DUE_REMINDER_DAYS). */
+  async function runDueReminders(at) {
+    const reminder = await services.bills.buildReminder({ at });
+    if (!reminder.count) return { sent: false, reason: 'sin-vencimientos' };
+    const extra = reminder.keyboard ? { reply_markup: reminder.keyboard } : {};
+    const outcome = await sendSummary('dueReminders', reminder.html, extra);
+    return { ...outcome, bills: reminder.count };
+  }
+
   const jobs = [
     {
       name: 'daily',
@@ -158,6 +167,14 @@ export function createScheduler({ config, repos, services, notifier, logger, clo
       run: runMonthly,
     },
   ];
+  if (services.bills && config.reminders?.enabled !== false) {
+    jobs.push({
+      name: 'dueReminders',
+      at: config.reminders?.at || '09:00',
+      matches: () => true,
+      run: runDueReminders,
+    });
+  }
 
   /**
    * Evalua que jobs estan vencidos y los ejecuta.

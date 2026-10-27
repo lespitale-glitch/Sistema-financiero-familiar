@@ -15,7 +15,9 @@
 Sistema financiero familiar con:
 
 - Bot de Telegram (Telegraf) para registrar gastos, ingresos e inversiones por texto, voz, foto o PDF.
-- OCR de facturas con Gemini y confirmación por botones.
+- OCR de facturas con Gemini o con el motor local de macOS (Vision + whisper.cpp, `AI_PROVIDER=local`) y confirmación por botones.
+- Vencimientos (tabla `bills`): se agendan desde facturas o con `/vence`, recordatorio diario y `/pagado`.
+- Gastos en dólares convertidos a pesos con cotización fija o de dolarapi.com (`metadata.fx` guarda el original).
 - Ingesta de facturas por email (HTTP push o IMAP).
 - Presupuestos dinámicos por categoría y presupuesto general.
 - Alertas por umbral (80 % / 100 %), sin duplicados.
@@ -40,6 +42,9 @@ Stack: **Node.js ESM**, Express, Telegraf, `dotenv`, `node:sqlite`, Gemini REST.
 8. **Scheduler idempotente:** tick cada 30 s, máximo una ejecución por día local, marcas en `settings` (`scheduler.lastRun.<job>`).
 9. **Un solo poller de Telegram por token.** Dos instancias en `polling` producen `409 Conflict`; para escalar, usar `webhook`.
 10. **Logs JSON** por línea, con redacción de tokens, secretos, passwords y claves API.
+11. **Nunca se guardan dólares como pesos.** Si un monto viene en USD y no hay cotización, `transactions.create` lanza `StoreError` con código `FX_UNAVAILABLE` y el bot pide cargarlo en pesos.
+12. **Variables booleanas ausentes usan su default documentado** (`bool()` en `config.js`).
+13. **Motor local solo en macOS.** En otro sistema `AI_PROVIDER=local` deja OCR y voz deshabilitados con un warning; el resto funciona.
 
 ---
 
@@ -62,7 +67,11 @@ Stack: **Node.js ESM**, Express, Telegraf, `dotenv`, `node:sqlite`, Gemini REST.
 | `src/services/reports.js` | Renderizado HTML de balance, presupuesto, gastos, inversiones, resúmenes y facturas. |
 | `src/services/parser.js` | Parser de lenguaje natural: montos, fechas, tipo, categoría, hashtags. |
 | `src/services/gemini.js` | Cliente REST de Gemini (texto, visión, audio). |
-| `src/services/ocr.js` | Extracción de facturas y transcripción de audio. |
+| `src/services/ocr.js` | Extracción de facturas y transcripción de audio; elige Gemini o el motor local (`AI_PROVIDER`). |
+| `src/services/local-engine.js` | Motor local macOS: ejecuta `bin/macos/finanzas-ocr` (Vision) y ffmpeg + whisper.cpp. |
+| `src/services/invoice-text.js` | Reglas para sacar total, vencimiento, emisor y categoría del texto de una factura. |
+| `src/services/bills.js` | Vencimientos: alta, agenda desde facturas, recordatorio, pagado y recurrencia mensual. |
+| `src/services/fx.js` | Cotización USD→ARS (fija o dolarapi.com con caché). |
 | `src/services/email.js` | Ingesta HTTP/IMAP, deduplicación y OCR de adjuntos. |
 | `src/services/scheduler.js` | Resúmenes diario/semanal/mensual. |
 | `src/services/users.js` | Resolución de identidad Telegram/email. |
@@ -233,6 +242,10 @@ Roles: `husband`, `wife`, `daughter`, `son`, `other`.
 | Variable | Requerida | Default | Descripción |
 |---|---|---|---|
 | `INGEST_RATE_LIMIT_PER_MINUTE` | No | `30` | Límite por IP/minuto. `0` lo desactiva. |
+| `AI_PROVIDER` | No | `gemini` | `gemini` o `local` (macOS: Vision + whisper.cpp). |
+| `LOCAL_OCR_BIN`, `LOCAL_OCR_LANGUAGES`, `LOCAL_WHISPER_MODEL`, `LOCAL_WHISPER_BIN`, `LOCAL_FFMPEG_BIN`, `LOCAL_WHISPER_THREADS`, `LOCAL_AI_TIMEOUT_MS` | No | ver `.env.example` | Motor local. |
+| `DUE_REMINDERS_ENABLED`, `DUE_REMINDER_AT`, `DUE_REMINDER_DAYS` | No | `true`, `09:00`, `3,1,0` | Recordatorio de vencimientos. |
+| `USD_ARS_RATE`, `USD_RATE_SOURCE`, `FX_API_URL` | No | vacío, `oficial`, dolarapi.com | Cotización del dólar. |
 | `TRUST_PROXY` | No | `1` | Valor de Express `trust proxy` (saltos, `true`/`false` o lista de IPs). Nunca `true` en producción. |
 
 ---

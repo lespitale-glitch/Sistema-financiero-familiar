@@ -30,3 +30,7 @@ Thumbs.db
 # Temporary uploads
 tmp/
 uploads/
+
+# Motor local de macOS (se generan con npm run setup:mac)
+bin/macos/finanzas-ocr
+models/

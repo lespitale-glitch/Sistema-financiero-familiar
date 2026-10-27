@@ -4,14 +4,16 @@ Guía corta para asistentes de IA. La memoria técnica completa está en [`AGENT
 
 ## Qué es
 
-Bot de Telegram + API HTTP para las finanzas de la familia: gastos, ingresos e inversiones por texto, voz, foto o PDF (OCR con Gemini), presupuestos con alertas, resúmenes automáticos, metas e ingesta de facturas por email.
+Bot de Telegram + API HTTP para las finanzas de la familia: gastos, ingresos e inversiones por texto, voz, foto o PDF (OCR con Gemini o con el motor local de macOS), vencimientos con recordatorio, gastos en dólares convertidos a pesos, presupuestos con alertas, resúmenes automáticos, metas e ingesta de facturas por email.
 
 ## Stack
 
 - **Node.js ≥ 22.13, ESM** (`"type": "module"`), sin build step ni TypeScript.
 - Express 4 (API), Telegraf 4 (bot), `dotenv`.
 - Persistencia: `node:sqlite` (default) o Supabase vía PostgREST (`fetch`).
-- Gemini por REST (sin SDK). Opcionales: `imapflow` + `mailparser` para IMAP.
+- OCR/voz: Gemini por REST (sin SDK) o, con `AI_PROVIDER=local`, Vision de macOS (`bin/macos/finanzas-ocr.swift`) + whisper.cpp + ffmpeg.
+- Cotización del dólar: `USD_ARS_RATE` fija o dolarapi.com.
+- Opcionales: `imapflow` + `mailparser` para IMAP.
 
 ## Comandos
 
@@ -23,6 +25,7 @@ npm test             # node --test "tests/*.test.js"
 npm run check        # sintaxis ESM + archivos de despliegue
 npm run smoke        # arranque real + endpoints (SQLite en memoria)
 npm run seed         # categorías y miembros iniciales
+npm run setup:mac    # (solo Mac) compila el OCR, instala whisper-cpp/ffmpeg y baja el modelo
 ```
 
 ## Estructura
@@ -36,11 +39,13 @@ src/
   logger.js       logs JSON con redacción de secretos
   bot/            Telegraf: index (auth), commands, handlers, keyboards
   db/             index (selector), sqlite-store, supabase-store, repositories, rows, schema.sql
-  services/       transactions, budgets, alerts, reports, parser, gemini, ocr, email, scheduler, users, notifier
+  services/       transactions, budgets, alerts, reports, parser, gemini, ocr, email, scheduler, users, notifier,
+                  bills (vencimientos), fx (dolar), local-engine (Vision/whisper), invoice-text (reglas de facturas)
   utils/          money (centavos), dates (zonas horarias), telegram-html
   web/server.js   Express: /healthz, /readyz, /api/*, webhook de Telegram, ingesta de email
+bin/macos/        finanzas-ocr.swift (el binario compilado y models/ no se suben)
 tests/            node:test; helpers en tests/helpers/
-scripts/          check, seed, smoke
+scripts/          check, seed, smoke, setup-mac.sh
 deploy/systemd/   unidad systemd
 supabase/         schema.sql para Supabase
 ```
@@ -57,6 +62,8 @@ supabase/         schema.sql para Supabase
 8. **Mensajes al usuario en español** (rioplatense), errores de API como `{ error: 'kebab-case', message }`.
 9. **Un solo poller de Telegram por token**; para escalar, webhook.
 10. **Inyección de dependencias**: los servicios reciben `{ config, repos, logger, clock, ... }`; los tests usan fakes de `tests/helpers/`.
+11. **Nunca registrar dólares como pesos**: todo monto en otra moneda pasa por `fx` en `transactions.create`; sin cotización se lanza `FX_UNAVAILABLE`.
+12. **El motor local no puede romper la app**: si falta un binario, se deshabilita OCR o voz y se loguea el motivo (`local.problems`).
 
 ## Antes de commitear
 

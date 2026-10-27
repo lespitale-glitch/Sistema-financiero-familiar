@@ -2,7 +2,7 @@
   "name": "finanzas-familiares",
   "version": "1.0.0",
   "private": true,
-  "description": "Sistema financiero familiar autonomo con bot de Telegram, OCR de facturas (Gemini), presupuestos, alertas e inversion.",
+  "description": "Sistema financiero familiar autonomo con bot de Telegram, OCR de facturas (Gemini o motor local de macOS), vencimientos, presupuestos, alertas e inversion.",
   "type": "module",
   "engines": {
     "node": ">=22.13.0"
@@ -15,7 +15,8 @@
     "test:coverage": "node --test --experimental-test-coverage \"tests/*.test.js\"",
     "seed": "node scripts/seed.js",
     "smoke": "node scripts/smoke.js",
-    "check": "node scripts/check.js"
+    "check": "node scripts/check.js",
+    "setup:mac": "bash scripts/setup-mac.sh"
   },
   "keywords": [
     "telegram-bot",

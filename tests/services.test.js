@@ -100,10 +100,11 @@ test('gasto que cruza 80% dispara la alerta una sola vez', async (t) => {
   assert.equal(second.alertResult.deliveries[0].sent, false);
   assert.equal(second.alertResult.deliveries[0].reason, 'duplicate');
 
-  // La notificacion a la familia fue al chat familiar.
+  // Una sola notificacion: al chat familiar y, por ALERT_AUTHOR_DM (default
+  // true), tambien al privado del autor.
   assert.deepEqual(
     sent.filter((message) => message.html.includes('Umbral de presupuesto 80%')).map((message) => message.chatId),
-    ['-100'],
+    ['-100', '111'],
   );
 });
 

@@ -431,6 +431,29 @@ function extractAmountCandidates(raw, scan) {
   return candidates;
 }
 
+const USD_BEFORE = /(?:u\$s|u\$d|us\$|usd|u\.s\.d\.?|dolares|d[oó]lares)\s*$/i;
+const USD_AFTER = /^\s*(?:usd|u\$s|us\$|d[oó]lar(?:es)?|verdes)(?![a-z0-9])/i;
+
+/**
+ * Moneda explicita pegada al monto elegido ("u$s 100", "100 dolares",
+ * "USD 15"). Solo mira alrededor del monto: "compre dolares por 150000"
+ * sigue siendo un monto en pesos.
+ */
+function detectAmountCurrency(raw, candidate) {
+  if (!candidate) return null;
+  const before = String(raw).slice(Math.max(0, candidate.start - 10), candidate.start);
+  const after = String(raw).slice(candidate.end, candidate.end + 12);
+  if (USD_BEFORE.test(before) || USD_AFTER.test(after)) return 'USD';
+  if (/(?:usd|u\$s|us\$)$/i.test(String(candidate.text || '').trim())) return 'USD';
+  return null;
+}
+
+function withoutCurrencyMarker(raw, candidate) {
+  const before = String(raw).slice(0, candidate.start).replace(USD_BEFORE, ' ');
+  const after = String(raw).slice(candidate.end).replace(USD_AFTER, ' ');
+  return `${before} ${String(raw).slice(candidate.start, candidate.end)} ${after}`;
+}
+
 function cleanNote(raw, candidate, explicitDateRaw, categoryName, type) {
   let note = String(raw ?? '');
   if (candidate) {
@@ -441,6 +464,7 @@ function cleanNote(raw, candidate, explicitDateRaw, categoryName, type) {
   note = note.replace(unicodeWordRegex('hoy|ayer|anteayer'), ' ');
   note = note.replace(unicodeWordRegex(NOTE_VERBS.join('|')), ' ');
   note = note.replace(unicodeWordRegex(NOTE_FILLERS.join('|')), ' ');
+  note = note.replace(/\bu\$[sd]\b|\bus\$|\bverdes\b/gi, ' ');
   note = note.replace(unicodeWordRegex('ars|usd|eur|brl|clp|mxn|uyu|pyg|pen|pesos?|d[oó]lares?|euros?'), ' ');
   note = note.replace(/[$€£¥]/g, ' ');
   note = note.replace(/\s+/g, ' ').trim();
@@ -510,7 +534,7 @@ export function parseTransactionMessage(message, options = {}) {
     return buildResult({ ...base, reason: 'empty', occurredAt: effectiveNow.toISOString() });
   }
 
-  const typeInfo = forceType
+  let typeInfo = forceType
     ? { type: normalizedDefault, explicit: true }
     : detectType(raw, normalizedDefault);
 
@@ -547,6 +571,12 @@ export function parseTransactionMessage(message, options = {}) {
       typeWasExplicit: typeInfo.explicit,
     });
   }
+
+  const detectedCurrency = detectAmountCurrency(raw, best) || currency;
+  // "100 dolares": la palabra es la moneda del monto, no una compra de dolares
+  // (inversion). Tipo y categoria se deciden sin ese marcador.
+  const contextText = detectedCurrency === 'USD' ? withoutCurrencyMarker(raw, best) : raw;
+  if (contextText !== raw && !forceType) typeInfo = detectType(contextText, normalizedDefault);
 
   if (best.multiplier && pool.length > 1) {
     base.warnings.push('Se aplicó un multiplicador sobre un monto ambiguo.');
@@ -587,7 +617,7 @@ export function parseTransactionMessage(message, options = {}) {
 
   // La categoria se deduce primero del texto libre (comercio/contexto; los
   // hashtags no cuentan como texto) y, si no hay coincidencia, de los tags.
-  let category = matchCategory(stripHashtags(raw), categoryList);
+  let category = matchCategory(stripHashtags(contextText), categoryList);
   if (!category) category = categoryFromTags(tags, categoryList);
   if (!category) {
     const fallbackName = FALLBACK_CATEGORY_BY_TYPE[typeInfo.type] || null;
@@ -607,6 +637,7 @@ export function parseTransactionMessage(message, options = {}) {
   return buildResult({
     ...base,
     ok: true,
+    currency: detectedCurrency,
     amountCents: best.cents,
     amountText: best.text,
     type: typeInfo.type,

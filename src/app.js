@@ -15,6 +15,9 @@ import { DEFAULT_CATEGORIES } from './domain.js';
 import { createNotifier } from './services/notifier.js';
 import { createGeminiClient } from './services/gemini.js';
 import { createOcrService } from './services/ocr.js';
+import { createLocalEngine } from './services/local-engine.js';
+import { createFxService } from './services/fx.js';
+import { createBillsService } from './services/bills.js';
 import { createAlertsService } from './services/alerts.js';
 import { createTransactionsService } from './services/transactions.js';
 import { createUsersService } from './services/users.js';
@@ -64,16 +67,27 @@ export async function createApp({ env = process.env, loadEnvFile = true, logger 
     audioModel: config.gemini.audioModel,
     logger: log,
   });
-  const ocr = createOcrService({ gemini, config, logger: log });
+  const local = config.ai.provider === 'local' ? createLocalEngine({ config, logger: log }) : null;
+  const ocr = createOcrService({ gemini, local, config, logger: log });
+  log.info('motor de OCR y voz', {
+    provider: config.ai.provider,
+    documents: ocr.documentsEnabled,
+    audio: ocr.audioEnabled,
+    ...(local ? { problems: local.problems } : {}),
+  });
 
+  const fx = createFxService({ config, logger: log });
   const alerts = createAlertsService({ repos, config, notifier, logger: log });
-  const transactions = createTransactionsService({ repos, config, alerts, logger: log });
+  const transactions = createTransactionsService({ repos, config, alerts, fx, logger: log });
+  const bills = createBillsService({ repos, config, logger: log });
 
   const services = {
     users,
     transactions,
     alerts,
     ocr,
+    fx,
+    bills,
   };
 
   // El servicio de email usa services.* en runtime (transactions/alerts/ocr).
@@ -136,6 +150,7 @@ export async function createApp({ env = process.env, loadEnvFile = true, logger 
       driver: config.db.driver,
       timezone: config.app.timezone,
       currency: config.app.currency,
+      ai: config.ai.provider,
       gemini: config.gemini.enabled,
     });
     return { ...listening, webhookUrl };

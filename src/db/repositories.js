@@ -123,6 +123,27 @@ function mapDocument(row) {
   };
 }
 
+const BILL_STATUSES = Object.freeze(['pending', 'paid', 'cancelled']);
+
+function mapBill(row) {
+  if (!row) return null;
+  return {
+    id: row.id,
+    name: row.name,
+    amountCents: row.amount_cents === null || row.amount_cents === undefined ? null : Number(row.amount_cents),
+    currency: row.currency || DEFAULT_CURRENCY,
+    dueDate: row.due_date ? String(row.due_date).slice(0, 10) : null,
+    status: row.status,
+    recurrence: row.recurrence || null,
+    documentId: row.document_id,
+    userId: row.user_id,
+    categoryId: row.category_id,
+    paidAt: row.paid_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function mapGoal(row) {
   if (!row) return null;
   return {
@@ -641,6 +662,72 @@ export function createRepositories(store, { clock = () => new Date(), idFactory 
     },
   };
 
+  const bills = {
+    async create(data) {
+      const amount = data.amountCents === null || data.amountCents === undefined ? null : Number(data.amountCents);
+      if (amount !== null && (!Number.isSafeInteger(amount) || amount <= 0)) throw new StoreError('amountCents invalido');
+      const dueDate = requiredText(data.dueDate, 'dueDate');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(dueDate)) throw new StoreError('dueDate debe tener formato YYYY-MM-DD');
+      const row = {
+        id: data.id || newId(),
+        name: requiredText(data.name, 'name').slice(0, 120),
+        amount_cents: amount,
+        currency: text(data.currency, DEFAULT_CURRENCY).toUpperCase(),
+        due_date: dueDate,
+        status: BILL_STATUSES.includes(data.status) ? data.status : 'pending',
+        recurrence: data.recurrence === 'monthly' ? 'monthly' : null,
+        document_id: text(data.documentId),
+        user_id: text(data.userId),
+        category_id: text(data.categoryId),
+        paid_at: null,
+        created_at: nowIso(clock),
+        updated_at: null,
+      };
+      return mapBill(await store.insert('bills', row));
+    },
+
+    async update(id, patch) {
+      const row = {};
+      if (patch.name !== undefined) row.name = requiredText(patch.name, 'name').slice(0, 120);
+      if (patch.amountCents !== undefined) row.amount_cents = patch.amountCents === null ? null : Number(patch.amountCents);
+      if (patch.currency !== undefined) row.currency = text(patch.currency, DEFAULT_CURRENCY).toUpperCase();
+      if (patch.dueDate !== undefined) row.due_date = requiredText(patch.dueDate, 'dueDate');
+      if (patch.status !== undefined) {
+        if (!BILL_STATUSES.includes(patch.status)) throw new StoreError(`Status de vencimiento invalido: ${patch.status}`);
+        row.status = patch.status;
+      }
+      if (patch.categoryId !== undefined) row.category_id = text(patch.categoryId);
+      if (patch.paidAt !== undefined) row.paid_at = text(patch.paidAt);
+      row.updated_at = nowIso(clock);
+      return mapBill(await store.update('bills', id, row));
+    },
+
+    async get(id) {
+      return mapBill(await store.findOne('bills', { id }));
+    },
+
+    async getByDocument(documentId) {
+      if (!documentId) return null;
+      return mapBill(await store.findOne('bills', { document_id: documentId }));
+    },
+
+    /** Vencimientos por estado y rango de fechas (YYYY-MM-DD), ordenados por fecha. */
+    async list({ status = 'pending', from = null, to = null, limit = 200 } = {}) {
+      const where = {};
+      if (status) where.status = status;
+      const range = {};
+      if (from) range.gte = from;
+      if (to) range.lte = to;
+      if (Object.keys(range).length) where.due_date = range;
+      const rows = await store.findMany('bills', where, {
+        orderBy: 'due_date',
+        ascending: true,
+        limit: clampLimit(limit, 200, 1000),
+      });
+      return rows.map(mapBill);
+    },
+  };
+
   const settings = {
     async get(key, fallback = null) {
       const row = await store.findOne('settings', { key });
@@ -749,6 +836,7 @@ export function createRepositories(store, { clock = () => new Date(), idFactory 
     transactions,
     documents,
     goals,
+    bills,
     settings,
     alerts,
     emailLog,

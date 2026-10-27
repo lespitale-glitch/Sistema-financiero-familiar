@@ -215,6 +215,19 @@ export function createEmailService({ config, repos, services, logger, notifier, 
   let lastError = null;
   let processed = 0;
 
+  /** Registra el vencimiento de la factura (si tiene) sin cortar la ingesta. */
+  async function trackBill(document) {
+    if (!document?.dueDate || typeof services.bills?.trackDocument !== 'function') return;
+    try {
+      await services.bills.trackDocument(document);
+    } catch (error) {
+      logger?.warn?.('email: no pude registrar el vencimiento', {
+        documentId: document.id,
+        error: error?.message || String(error),
+      });
+    }
+  }
+
   async function markLog(record) {
     try {
       await repos.emailLog.mark(record);
@@ -350,13 +363,14 @@ export function createEmailService({ config, repos, services, logger, notifier, 
             mimeType: attachment.mimeType,
             vendor: extraction.vendor,
             totalCents: extraction.amountCents,
-            currency,
+            currency: extraction.currency || currency,
             dueDate: extraction.dueDate,
             categoryId: category?.id || null,
             extracted: extraction,
             status: 'pending',
             source: 'email',
           });
+          await trackBill(document);
           const target = notificationTarget(config, user);
           if (target) {
             const message = buildPendingDocumentMessage({
@@ -413,6 +427,7 @@ export function createEmailService({ config, repos, services, logger, notifier, 
           user,
           type: parsed.type,
           amountCents: parsed.amountCents,
+          currency: parsed.currency || currency,
           category: parsed.category ?? parsed.categoryName ?? null,
           note: parsed.note || subject || 'Movimiento por email',
           source: TRANSACTION_SOURCES.EMAIL,

@@ -113,6 +113,24 @@ create table if not exists public.email_log (
   error text
 );
 
+create table if not exists public.bills (
+  id text primary key,
+  name text not null,
+  amount_cents bigint,
+  currency text not null default 'ARS',
+  due_date date not null,
+  status text not null default 'pending' check (status in ('pending', 'paid', 'cancelled')),
+  recurrence text check (recurrence is null or recurrence in ('monthly')),
+  document_id text references public.documents(id) on delete set null,
+  user_id text references public.users(id) on delete set null,
+  category_id text references public.categories(id) on delete set null,
+  paid_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz
+);
+create index if not exists idx_bills_status_due on public.bills(status, due_date);
+create index if not exists idx_bills_document on public.bills(document_id);
+
 -- Seguridad: RLS habilitado sin politicas. El backend usa service_role.
 alter table public.users enable row level security;
 alter table public.categories enable row level security;
@@ -122,6 +140,7 @@ alter table public.goals enable row level security;
 alter table public.settings enable row level security;
 alter table public.alert_events enable row level security;
 alter table public.email_log enable row level security;
+alter table public.bills enable row level security;
 
 -- Opcional: permitir lectura con anon key para un dashboard propio.
 -- create policy "lectura publica de categorias" on public.categories

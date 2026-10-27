@@ -16,6 +16,9 @@ Sistema financiero familiar autónomo con **bot de Telegram**, **OCR de facturas
 - [Comandos del bot](#comandos-del-bot)
 - [API HTTP](#api-http)
 - [Facturas, voz y email](#facturas-voz-y-email)
+- [Vencimientos](#vencimientos)
+- [Dólares](#dólares)
+- [Motor local en Mac (sin Gemini)](#motor-local-en-mac-sin-gemini)
 - [Presupuestos, alertas y resúmenes](#presupuestos-alertas-y-resúmenes)
 - [Base de datos](#base-de-datos)
 - [Pruebas](#pruebas)
@@ -36,8 +39,10 @@ Sistema financiero familiar autónomo con **bot de Telegram**, **OCR de facturas
 - **Identificación por miembro de la familia**: esposo, esposa, hija/hijo u otro, mediante Telegram ID y/o email (`FAMILY_MEMBERS`).
 - **Registro por texto libre en lenguaje natural**: “gasté 15.000 en el super”, “cobré el sueldo”, “invertí 50 mil en plazo fijo”.
 - **Comandos explícitos** para gastos, ingresos, inversiones, presupuestos, metas y reportes.
-- **Voz**: transcripción con Gemini y registro automático del movimiento.
-- **Fotos y PDF de facturas**: OCR con Gemini, vista previa y botones **Confirmar / Editar / Descartar**.
+- **Voz**: transcripción con Gemini o, en Mac, **localmente con whisper.cpp** (sin internet).
+- **Fotos y PDF de facturas**: OCR con Gemini o, en Mac, **localmente con Vision de macOS**; vista previa y botones **Confirmar / Editar / Descartar**.
+- **Vencimientos**: las facturas con fecha límite se agendan solas; `/vence` para cargar otros (con `#mensual` para alquiler, expensas, etc.). Recordatorio diario 3 días antes, 1 día antes y el mismo día, hasta que se marcan como pagados.
+- **Dólares**: “gasté 100 dólares” o “u$s 15” se convierte a pesos con la cotización (fija o de dolarapi.com) y se guarda el monto original.
 - **Ingesta por email**: endpoint HTTP para SendGrid/Mailgun/Cloudflare/forwarder propio y, opcionalmente, poller IMAP.
 - **Presupuestos dinámicos**: categorías editables, presupuesto mensual por categoría y presupuesto general.
 - **Alertas automáticas** al cruzar los umbrales configurados (por defecto 80 % y 100 %), sin duplicados.
@@ -235,6 +240,29 @@ Todas las variables se leen de `.env` (o del entorno del proceso). Las que no ti
 
 Para Supabase, ejecutar antes `supabase/schema.sql` en el SQL Editor del proyecto.
 
+### Motor de OCR y voz
+
+| Variable | Requerida | Default | Descripción |
+|---|---|---|---|
+| `AI_PROVIDER` | No | `gemini` | `gemini` (nube) o `local` (solo macOS: Vision + whisper.cpp, sin internet). Ver [Motor local en Mac](#motor-local-en-mac-sin-gemini). |
+| `LOCAL_OCR_BIN` | No | `bin/macos/finanzas-ocr` | Binario de OCR que compila `npm run setup:mac`. |
+| `LOCAL_OCR_LANGUAGES` | No | `es-ES,en-US` | Idiomas de Vision. |
+| `LOCAL_WHISPER_MODEL` | No | `models/ggml-small.bin` | Modelo de whisper.cpp. |
+| `LOCAL_WHISPER_THREADS` | No | `4` | Hilos de CPU para transcribir. |
+| `LOCAL_WHISPER_BIN` / `LOCAL_FFMPEG_BIN` | No | se buscan en `PATH` y Homebrew | Rutas explícitas si la app corre como servicio. |
+| `LOCAL_AI_TIMEOUT_MS` | No | `120000` | Tiempo máximo por archivo. |
+
+### Vencimientos y dólares
+
+| Variable | Requerida | Default | Descripción |
+|---|---|---|---|
+| `DUE_REMINDERS_ENABLED` | No | `true` | Recordatorio diario de vencimientos. |
+| `DUE_REMINDER_AT` | No | `09:00` | Hora local del recordatorio. |
+| `DUE_REMINDER_DAYS` | No | `3,1,0` | Días de anticipación (0 = el mismo día). Los vencidos se recuerdan todos los días. |
+| `USD_ARS_RATE` | No | vacío | Cotización fija (pesos por dólar). Si está vacía se usa la API. |
+| `USD_RATE_SOURCE` | No | `oficial` | `oficial`, `blue`, `bolsa` (MEP), `contadoconliqui`, `tarjeta`, `mayorista` o `cripto`. |
+| `FX_API_URL` | No | `https://dolarapi.com/v1/dolares` | API de cotizaciones (usa el valor `venta`, con caché de 1 hora). |
+
 ### Gemini (OCR, voz y parsing asistido)
 
 | Variable | Requerida | Default | Descripción |
@@ -300,6 +328,9 @@ Para Supabase, ejecutar antes `supabase/schema.sql` en el SQL Editor del proyect
 | `/categorias` | Listar categorías activas. |
 | `/nueva_categoria <nombre> [presupuesto]` | Crear una categoría. |
 | `/presupuesto_set <categoría> <monto>` | Ajustar el presupuesto de una categoría (o el general). |
+| `/vencimientos` | Vencimientos pendientes, con botón **Pagué**. |
+| `/vence <fecha> [monto] <nombre> [#mensual]` | Agendar un vencimiento. |
+| `/pagado <número>` | Marcar un vencimiento como pagado. |
 | `/metas` | Ver metas de ahorro y progreso. |
 | `/meta <nombre> <objetivo>` | Crear una meta. |
 | `/aportar <meta> <monto>` | Aportar a una meta. |
@@ -350,15 +381,16 @@ curl -X POST http://localhost:3000/api/transactions \
 ### Fotos y PDF
 
 1. Enviar una foto o PDF al bot.
-2. Gemini extrae comercio, fecha, total, moneda e ítems.
-3. El bot muestra una vista previa con botones **Confirmar**, **Editar** y **Descartar**.
-4. Al confirmar se crea el movimiento, se vincula el documento y se evalúan alertas.
+2. Gemini (o el motor local de Mac) extrae comercio, fecha, vencimiento, total y moneda.
+3. Si la factura tiene vencimiento, se agenda sola para el recordatorio.
+4. El bot muestra una vista previa con botones **Confirmar**, **Editar** y **Descartar**.
+5. Al confirmar se crea el movimiento, se vincula el documento y se evalúan alertas. Si se descarta, también se cancela el vencimiento.
 
 Si Gemini no está configurado o falla, el bot responde con un mensaje claro y no bloquea el resto de funciones.
 
 ### Notas de voz
 
-Se descargan desde Telegram, se transcriben con Gemini y se procesan con el mismo parser que el texto libre. Si la transcripción no contiene un monto, se pide aclaración.
+Se descargan desde Telegram, se transcriben con Gemini o whisper.cpp y se procesan con el mismo parser que el texto libre. Si la transcripción no contiene un monto, se pide aclaración.
 
 ### Email
 
@@ -368,6 +400,61 @@ Dos alternativas:
 - **IMAP poll** (opt-in): completar `IMAP_HOST`, `IMAP_USER` e `IMAP_PASSWORD`. Se revisan los no leídos cada `IMAP_POLL_SECONDS`. Requiere las dependencias opcionales `imapflow` y `mailparser` (ya declaradas en `package.json`).
 
 Los remitentes desconocidos se rechazan. Para autorizarlos, agregar su email en `FAMILY_MEMBERS`.
+
+---
+
+## Vencimientos
+
+| Acción | Cómo |
+|---|---|
+| Agendar una factura | Mandar la foto/PDF: si trae vencimiento, se agenda sola. |
+| Cargar uno a mano | `/vence 15/11 45000 Luz Edesur` |
+| Pago mensual fijo | `/vence 10 350000 Alquiler #mensual` (todos los días 10) |
+| Sin monto | `/vence 2026-12-01 Patente` |
+| Ver pendientes | `/vencimientos` (numerados, con botón **Pagué**) |
+| Marcar pagado | `/pagado 1` o el botón **Pagué** |
+
+Todos los días a `DUE_REMINDER_AT` llega al chat familiar un recordatorio con lo vencido y lo que vence en los días de `DUE_REMINDER_DAYS` (3, 1 y 0 por defecto). Al pagar uno mensual se agenda solo el del mes siguiente.
+
+Marcar "pagado" no registra el gasto: el gasto se registra al confirmar la factura o con `/gasto`.
+
+## Dólares
+
+Si el monto está en dólares (`gasté 100 dólares en Netflix`, `u$s 15 Spotify`, `USD 20 hosting`), se convierte a pesos al registrarlo y la confirmación muestra la cuenta: `💱 US$ 100 × $ 1.450 (dólar oficial)`. El monto original y la cotización quedan en el movimiento.
+
+- Con `USD_ARS_RATE` se usa esa cotización fija (no usa internet).
+- Si no, se consulta dolarapi.com (`USD_RATE_SOURCE`), con caché de 1 hora y respaldo de hasta 24 horas.
+- Si no hay cotización disponible, **el gasto no se registra** y el bot pide cargarlo en pesos: nunca se guardan dólares como si fueran pesos.
+- "Compré dólares por 150.000" sigue siendo una inversión de $150.000.
+
+## Motor local en Mac (sin Gemini)
+
+En una Mac (macOS 11 o posterior) el OCR y la voz pueden funcionar sin internet y sin API key:
+
+- **Fotos y PDF**: framework **Vision** de macOS (el mismo de "Texto en vivo"). Los PDF digitales se leen directo; los escaneados pasan por OCR.
+- **Audios**: **whisper.cpp** con el modelo `small` (~470 MB en disco) y ffmpeg para convertir el audio de Telegram.
+- Los datos de la factura (total, vencimiento, emisor, categoría) se sacan con reglas pensadas para facturas y tickets argentinos (`src/services/invoice-text.js`).
+
+Instalación (una vez):
+
+```bash
+xcode-select --install        # si no tenés las Command Line Tools
+npm run setup:mac             # compila el OCR, instala whisper-cpp y ffmpeg, baja el modelo
+```
+
+Y en `.env`:
+
+```env
+AI_PROVIDER=local
+```
+
+Consumo: no queda nada corriendo en segundo plano. Cada foto tarda 1 o 2 segundos. Cada audio levanta whisper unos segundos y usa ~500 MB de RAM mientras transcribe. Para usar menos RAM: `WHISPER_MODEL=base npm run setup:mac` y `LOCAL_WHISPER_MODEL=models/ggml-base.bin` (menos preciso).
+
+Limitaciones frente a Gemini:
+
+- Las reglas encuentran bien "Total a pagar", "Importe total", "TOTAL" y los vencimientos, pero un formato muy raro puede requerir `/corregir`. La vista previa siempre muestra lo detectado antes de confirmar.
+- No extrae ítems de detalle.
+- Solo funciona en macOS. En Windows o Linux usar `AI_PROVIDER=gemini`.
 
 ---
 
@@ -693,10 +780,12 @@ git push   # autoDeploy reconstruye el servicio
 │   ├── services/              # transacciones, alertas, OCR, email, scheduler
 │   ├── utils/                 # dinero, fechas, HTML de Telegram
 │   └── web/server.js          # Express: API y webhook
+├── bin/macos/                 # OCR con Vision (Swift) para el motor local
 ├── tests/                     # pruebas (node:test)
 ├── scripts/
 │   ├── seed.js                # siembra categorías y miembros
 │   ├── smoke.js               # prueba de arranque end-to-end
+│   ├── setup-mac.sh           # instala el motor local (npm run setup:mac)
 │   └── check.js               # sintaxis + estructura
 ├── deploy/systemd/            # unidad systemd
 ├── supabase/schema.sql        # esquema para Supabase

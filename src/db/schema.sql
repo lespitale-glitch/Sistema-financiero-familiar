@@ -119,3 +119,23 @@ CREATE TABLE IF NOT EXISTS email_log (
   document_id TEXT,
   error TEXT
 );
+
+-- Vencimientos a pagar (facturas con fecha limite o cargados con /vence).
+CREATE TABLE IF NOT EXISTS bills (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  amount_cents INTEGER,
+  currency TEXT NOT NULL DEFAULT 'ARS',
+  due_date TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'paid', 'cancelled')),
+  recurrence TEXT CHECK (recurrence IS NULL OR recurrence IN ('monthly')),
+  document_id TEXT REFERENCES documents(id) ON DELETE SET NULL,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  category_id TEXT REFERENCES categories(id) ON DELETE SET NULL,
+  paid_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_bills_status_due ON bills (status, due_date);
+CREATE INDEX IF NOT EXISTS idx_bills_document ON bills (document_id);

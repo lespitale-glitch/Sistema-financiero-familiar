@@ -24,6 +24,8 @@ function int(value, fallback, { min = -Infinity, max = Infinity } = {}) {
 
 function bool(value, fallback = false) {
   const normalized = String(value ?? '').trim().toLowerCase();
+  // Variable ausente o vacia: usa el default documentado (antes devolvia false).
+  if (normalized === '') return fallback;
   if (TRUTHY.has(normalized)) return true;
   if (FALSY.has(normalized)) return false;
   return fallback;
@@ -42,6 +44,30 @@ function parseTrustProxy(value) {
   if (Number.isInteger(hops) && hops > 0 && String(hops) === text) return hops;
   // Lista de IPs/subredes o presets de Express (loopback, uniquelocal...).
   return str(value);
+}
+
+/** Numero positivo o null (acepta coma decimal). */
+function parsePositiveNumber(value) {
+  let text = str(value).replace(/\s/g, '');
+  // "1.450" o "1.450,50" usan punto de miles (formato es-AR).
+  if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(text) || text.includes(',')) text = text.replace(/\./g, '').replace(',', '.');
+  const number = Number(text);
+  return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+/** Dias de anticipacion para recordar vencimientos (default 3,1,0). */
+function parseReminderDays(value) {
+  const days = list(value)
+    .map((item) => Number.parseInt(item, 10))
+    .filter((item) => Number.isInteger(item) && item >= 0 && item <= 60);
+  const unique = [...new Set(days.length ? days : [3, 1, 0])];
+  return unique.sort((a, b) => b - a);
+}
+
+/** Ruta relativa a la raiz del proyecto (o absoluta tal cual). */
+function resolveProjectPath(value) {
+  if (!value) return null;
+  return path.isAbsolute(value) ? value : path.join(PROJECT_ROOT, value);
 }
 
 function list(value) {
@@ -201,6 +227,30 @@ export function loadConfig(env = process.env, { loadEnvFile = false } = {}) {
     family: {
       members: parseFamilyMembers(env.FAMILY_MEMBERS),
     },
+    reminders: {
+      enabled: bool(env.DUE_REMINDERS_ENABLED, true),
+      at: isTimeOfDay(env.DUE_REMINDER_AT) ? str(env.DUE_REMINDER_AT) : '09:00',
+      days: parseReminderDays(env.DUE_REMINDER_DAYS),
+    },
+    fx: {
+      // Cotizacion fija (pesos por dolar). Si esta vacia se consulta fx.apiUrl.
+      usdRate: parsePositiveNumber(env.USD_ARS_RATE),
+      usdSource: (str(env.USD_RATE_SOURCE) || 'oficial').toLowerCase(),
+      apiUrl: (str(env.FX_API_URL) || 'https://dolarapi.com/v1/dolares').replace(/\/+$/, ''),
+    },
+    ai: {
+      // gemini (nube, requiere GEMINI_API_KEY) | local (macOS: Vision + whisper.cpp)
+      provider: str(env.AI_PROVIDER, 'gemini').toLowerCase() === 'local' ? 'local' : 'gemini',
+      local: {
+        ocrBin: resolveProjectPath(str(env.LOCAL_OCR_BIN) || 'bin/macos/finanzas-ocr'),
+        ocrLanguages: list(env.LOCAL_OCR_LANGUAGES).length ? list(env.LOCAL_OCR_LANGUAGES) : ['es-ES', 'en-US'],
+        whisperBin: str(env.LOCAL_WHISPER_BIN) || null,
+        whisperModel: resolveProjectPath(str(env.LOCAL_WHISPER_MODEL) || 'models/ggml-small.bin'),
+        whisperThreads: int(env.LOCAL_WHISPER_THREADS, 4, { min: 1, max: 16 }),
+        ffmpegBin: str(env.LOCAL_FFMPEG_BIN) || null,
+        timeoutMs: int(env.LOCAL_AI_TIMEOUT_MS, 120000, { min: 5000, max: 600000 }),
+      },
+    },
   };
 
   return Object.freeze(config);
@@ -230,8 +280,11 @@ export function validateConfig(config) {
     if (!config.db.supabase.url) errors.push('DB_DRIVER=supabase requiere SUPABASE_URL.');
     if (!config.db.supabase.key) errors.push('DB_DRIVER=supabase requiere SUPABASE_SERVICE_ROLE_KEY.');
   }
-  if (!config.gemini.enabled) {
-    warnings.push('GEMINI_API_KEY vacio: OCR de facturas y transcripcion de voz deshabilitados.');
+  if (config.ai.provider === 'gemini' && !config.gemini.enabled) {
+    warnings.push('GEMINI_API_KEY vacio: OCR de facturas y transcripcion de voz deshabilitados (en Mac podes usar AI_PROVIDER=local).');
+  }
+  if (config.ai.provider === 'local' && process.platform !== 'darwin') {
+    warnings.push('AI_PROVIDER=local solo funciona en macOS: OCR y voz quedan deshabilitados en este equipo.');
   }
   if (!config.api.token) {
     warnings.push('API_TOKEN vacio: los endpoints /api/* quedan bloqueados (el bot sigue funcionando).');

@@ -9,6 +9,8 @@ import { DEFAULT_CATEGORIES } from '../../src/domain.js';
 import { createAlertsService } from '../../src/services/alerts.js';
 import { createTransactionsService } from '../../src/services/transactions.js';
 import { createUsersService } from '../../src/services/users.js';
+import { createBillsService } from '../../src/services/bills.js';
+import { createFxService } from '../../src/services/fx.js';
 
 /** Fecha fija: 15/10/2026 09:00 en America/Argentina/Buenos_Aires. */
 export const FIXED_DATE = new Date('2026-10-15T12:00:00.000Z');
@@ -90,12 +92,22 @@ export async function createHarness({ ocr, env = {} } = {}) {
 
   const clock = () => FIXED_DATE;
   const alerts = createAlertsService({ repos, config, notifier, logger: silentLogger, clock });
-  const transactions = createTransactionsService({ repos, config, alerts, logger: silentLogger, clock });
+  // Sin red en tests: la cotizacion sale de USD_ARS_RATE o falla.
+  const fx = createFxService({
+    config,
+    logger: silentLogger,
+    clock,
+    fetchImpl: async () => { throw new Error('sin red en tests'); },
+  });
+  const transactions = createTransactionsService({ repos, config, alerts, fx, logger: silentLogger, clock });
+  const bills = createBillsService({ repos, config, logger: silentLogger, clock });
 
   const services = {
     users,
     transactions,
     alerts,
+    fx,
+    bills,
     ocr: ocr || createFakeOcr(),
   };
 

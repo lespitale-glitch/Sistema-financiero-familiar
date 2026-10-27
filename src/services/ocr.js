@@ -9,6 +9,10 @@
 import { parseAmountToCents, toCents } from '../utils/money.js';
 import { localParts, pad2, parseHumanDate } from '../utils/dates.js';
 import { TRANSACTION_TYPES, TYPE_LIST } from '../domain.js';
+import { extractInvoiceFields } from './invoice-text.js';
+
+const LOCAL_OCR_MODEL = 'macos-vision';
+const LOCAL_AUDIO_MODEL = 'whisper.cpp';
 
 const DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 const MAX_LINE_ITEMS = 30;
@@ -246,8 +250,11 @@ function clamp(value, min, max) {
  * @param {object} [options.logger] Logger con debug/warn.
  * @param {() => Date} [options.clock] Reloj inyectable para tests.
  */
-export function createOcrService({ gemini, config, logger, clock = () => new Date() } = {}) {
-  const enabled = Boolean(gemini?.enabled);
+export function createOcrService({ gemini, local = null, config, logger, clock = () => new Date() } = {}) {
+  const provider = config?.ai?.provider === 'local' ? 'local' : 'gemini';
+  const documentsEnabled = provider === 'local' ? Boolean(local?.documentsEnabled) : Boolean(gemini?.enabled);
+  const audioEnabled = provider === 'local' ? Boolean(local?.audioEnabled) : Boolean(gemini?.enabled);
+  const enabled = documentsEnabled || audioEnabled;
   const configuredCurrency = String(config?.app?.currency || 'ARS').toUpperCase();
   const timezone = config?.app?.timezone || 'UTC';
 
@@ -269,7 +276,9 @@ export function createOcrService({ gemini, config, logger, clock = () => new Dat
     categories = [],
     currency: inputCurrency = config?.app?.currency || 'ARS',
   } = {}) {
-    const visionModel = config?.gemini?.visionModel || gemini?.visionModel || null;
+    const visionModel = provider === 'local'
+      ? LOCAL_OCR_MODEL
+      : config?.gemini?.visionModel || gemini?.visionModel || null;
     const bytes = toBuffer(buffer);
     if (!bytes || bytes.length === 0) {
       return {
@@ -303,7 +312,13 @@ export function createOcrService({ gemini, config, logger, clock = () => new Dat
       };
     }
 
-    if (!enabled) {
+    const documentCurrency = String(inputCurrency || configuredCurrency).trim().toUpperCase() || configuredCurrency;
+
+    if (provider === 'local') {
+      return extractWithLocal({ bytes, mime, fileName, categories, documentCurrency });
+    }
+
+    if (!documentsEnabled) {
       return {
         ok: false,
         error: 'gemini-deshabilitado',
@@ -323,7 +338,6 @@ export function createOcrService({ gemini, config, logger, clock = () => new Dat
       };
     }
 
-    const documentCurrency = String(inputCurrency || configuredCurrency).trim().toUpperCase() || configuredCurrency;
     const prompt = buildDocumentPrompt({ categories, currency: documentCurrency });
 
     let result;
@@ -365,6 +379,61 @@ export function createOcrService({ gemini, config, logger, clock = () => new Dat
     }
 
     const raw = result.data && typeof result.data === 'object' && !Array.isArray(result.data) ? result.data : {};
+    return normalizeExtraction(raw, {
+      categories,
+      documentCurrency,
+      model: visionModel,
+      fileName,
+      rawText: typeof result.text === 'string' ? result.text : '',
+    });
+  }
+
+  /** OCR con Vision (macOS) + reglas de invoice-text.js. */
+  async function extractWithLocal({ bytes, mime, fileName, categories, documentCurrency }) {
+    const failure = (error, warning) => ({
+      ok: false,
+      error,
+      warnings: [warning],
+      model: LOCAL_OCR_MODEL,
+      fileName: fileName || null,
+    });
+    if (!local?.documentsEnabled) {
+      return failure('ocr-local-no-disponible', 'El OCR local no esta instalado. Corre npm run setup:mac en la Mac.');
+    }
+    let recognized;
+    try {
+      recognized = await local.recognizeText({ buffer: bytes, mime, fileName });
+    } catch (error) {
+      logger?.warn?.('ocr local: fallo inesperado', { error: error?.message || String(error), fileName });
+      return failure('extraccion-fallida', 'No se pudo leer el comprobante.');
+    }
+    if (!recognized?.ok) {
+      return failure(recognized?.error || 'extraccion-fallida', 'No se pudo leer texto en el comprobante. Proba con una foto mas nitida.');
+    }
+    const now = typeof clock === 'function' ? clock() : new Date();
+    const raw = extractInvoiceFields(recognized.text, {
+      categories,
+      now,
+      defaultYear: localParts(now, timezone).year,
+    });
+    logger?.debug?.('ocr local: datos extraidos', {
+      vendor: raw.vendor,
+      hasTotal: Boolean(raw.total),
+      dueDate: raw.due_date,
+      confidence: raw.confidence,
+    });
+    return normalizeExtraction(raw, {
+      categories,
+      documentCurrency,
+      model: LOCAL_OCR_MODEL,
+      fileName,
+      rawText: recognized.text,
+    });
+  }
+
+  /** Normaliza el "raw" (de Gemini o de las reglas locales) al contrato del bot. */
+  function normalizeExtraction(raw, { categories, documentCurrency, model, fileName, rawText }) {
+    const visionModel = model;
 
     // Monto total: string tal como se imprime, o numero como fallback.
     const rawTotal = raw.total;
@@ -445,7 +514,7 @@ export function createOcrService({ gemini, config, logger, clock = () => new Dat
       type,
       confidence,
       lineItems,
-      rawText: typeof result.text === 'string' ? result.text.slice(0, MAX_RAW_TEXT) : '',
+      rawText: String(rawText || '').slice(0, MAX_RAW_TEXT),
       warnings,
       model: visionModel,
       fileName: fileName || null,
@@ -462,7 +531,9 @@ export function createOcrService({ gemini, config, logger, clock = () => new Dat
    * @returns {Promise<{ok:boolean, text:string, language:string, error:string|null, model:string}>}
    */
   async function transcribeAudio({ buffer, mimeType = null, fileName = null } = {}) {
-    const audioModel = config?.gemini?.audioModel || gemini?.audioModel || null;
+    const audioModel = provider === 'local'
+      ? LOCAL_AUDIO_MODEL
+      : config?.gemini?.audioModel || gemini?.audioModel || null;
     const bytes = toBuffer(buffer);
     if (!bytes || bytes.length === 0) {
       return { ok: false, text: '', language: 'es', error: 'archivo-vacio', model: audioModel };
@@ -478,7 +549,26 @@ export function createOcrService({ gemini, config, logger, clock = () => new Dat
       return { ok: false, text: '', language: 'es', error: 'archivo-demasiado-grande', model: audioModel };
     }
 
-    if (!enabled || typeof gemini.generateText !== 'function') {
+    if (provider === 'local') {
+      if (!local?.audioEnabled) {
+        return { ok: false, text: '', language: 'es', error: 'voz-local-no-disponible', model: audioModel };
+      }
+      let localResult;
+      try {
+        localResult = await local.transcribe({ buffer: bytes, mime, fileName });
+      } catch (error) {
+        logger?.warn?.('voz local: fallo inesperado', { error: error?.message || String(error), fileName });
+        return { ok: false, text: '', language: 'es', error: 'transcripcion-fallida', model: audioModel };
+      }
+      if (!localResult?.ok) {
+        return { ok: false, text: '', language: 'es', error: localResult?.error || 'transcripcion-fallida', model: audioModel };
+      }
+      const localText = String(localResult.text).replace(/\s+/g, ' ').trim().slice(0, MAX_TRANSCRIPTION).trim();
+      if (!localText) return { ok: false, text: '', language: 'es', error: 'transcripcion-vacia', model: audioModel };
+      return { ok: true, text: localText, language: 'es', error: null, model: audioModel };
+    }
+
+    if (!audioEnabled || typeof gemini?.generateText !== 'function') {
       return { ok: false, text: '', language: 'es', error: 'gemini-deshabilitado', model: audioModel };
     }
 
@@ -521,7 +611,10 @@ export function createOcrService({ gemini, config, logger, clock = () => new Dat
   }
 
   return {
+    provider,
     enabled,
+    documentsEnabled,
+    audioEnabled,
     extractDocument,
     transcribeAudio,
   };

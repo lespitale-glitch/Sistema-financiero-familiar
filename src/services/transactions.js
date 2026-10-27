@@ -21,7 +21,42 @@ const FALLBACK_BY_TYPE = Object.freeze({
  * Caso de uso central: registrar un movimiento, resolver su categoria y
  * disparar (sin bloquear) las alertas de presupuesto.
  */
-export function createTransactionsService({ repos, config, alerts, logger, clock = () => new Date() }) {
+export function createTransactionsService({ repos, config, alerts, logger, fx = null, clock = () => new Date() }) {
+  const baseCurrency = String(config.app.currency || 'ARS').toUpperCase();
+
+  /**
+   * Si el monto viene en otra moneda (ej. USD), lo pasa a la moneda base y
+   * guarda el original en metadata.fx. Lanza StoreError FX_UNAVAILABLE si no
+   * hay cotizacion: nunca se registra un monto en dolares como si fueran pesos.
+   */
+  async function normalizeCurrency(amountCents, currency, metadata) {
+    const origin = String(currency || baseCurrency).toUpperCase();
+    if (origin === baseCurrency) return { amountCents, currency: baseCurrency, metadata };
+    const conversion = fx ? await fx.convert(amountCents, origin, baseCurrency) : { ok: false, error: 'sin-servicio-fx' };
+    if (!conversion.ok) {
+      logger?.warn?.('no pude convertir el monto a la moneda base', { origin, error: conversion.error });
+      throw new StoreError(
+        `No pude obtener la cotización para convertir ${origin} a ${baseCurrency}. Cargalo en pesos o configurá USD_ARS_RATE.`,
+        { code: 'FX_UNAVAILABLE' },
+      );
+    }
+    return {
+      amountCents: conversion.amountCents,
+      currency: baseCurrency,
+      metadata: {
+        ...metadata,
+        fx: {
+          originalAmountCents: conversion.originalAmountCents,
+          originalCurrency: conversion.originalCurrency,
+          rate: conversion.rate,
+          source: conversion.source,
+          ...(conversion.stale ? { stale: true } : {}),
+          at: clock().toISOString(),
+        },
+      },
+    };
+  }
+
   async function resolveCategory({ type, category = null, categoryId = null }) {
     if (categoryId) {
       const found = await repos.categories.get(categoryId);
@@ -62,19 +97,20 @@ export function createTransactionsService({ repos, config, alerts, logger, clock
     if (!isPositiveCents(amountCents)) {
       throw new StoreError('El monto debe ser mayor a cero.', { code: 'INVALID_AMOUNT' });
     }
+    const normalized = await normalizeCurrency(amountCents, currency, metadata);
     const resolvedCategory = await resolveCategory({ type, category, categoryId });
 
     const transaction = await repos.transactions.create({
       userId: user?.id || userId || null,
       categoryId: resolvedCategory?.id || null,
       type,
-      amountCents,
-      currency,
+      amountCents: normalized.amountCents,
+      currency: normalized.currency,
       note,
       source,
       status,
       occurredAt,
-      metadata,
+      metadata: normalized.metadata,
       documentId,
     });
 
@@ -131,6 +167,7 @@ export function createTransactionsService({ repos, config, alerts, logger, clock
         ...(overrides.metadata || {}),
       },
       documentId: document.id,
+      currency: overrides.currency || document.currency || baseCurrency,
       alertUserName: user?.name || null,
     });
 

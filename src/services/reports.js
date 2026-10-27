@@ -8,6 +8,7 @@ import { EXPENSE_TYPES, TRANSACTION_TYPES, TYPE_LIST, TYPE_META } from '../domai
 import { formatCents } from '../utils/money.js';
 import { monthLabel } from '../utils/dates.js';
 import { escapeHtml, progressBar } from '../utils/telegram-html.js';
+import { fxSourceLabel } from './fx.js';
 
 const MAX_MESSAGE = 3900;
 const FALLBACK_EMOJI = '🏷️';
@@ -563,6 +564,14 @@ export function buildTransactionConfirmation({
   const amount = `${sign}${money(Math.abs(toNumber(transaction.amountCents)), currency, locale)}`;
 
   lines.push(`${emoji} <b>${escapeHtml(label)}</b> · <b>${amount}</b>`);
+
+  const fx = transaction.metadata?.fx;
+  if (fx && toNumber(fx.originalAmountCents) > 0 && toNumber(fx.rate) > 0) {
+    const original = formatCents(toNumber(fx.originalAmountCents), fx.originalCurrency || 'USD', locale);
+    const rate = money(Math.round(toNumber(fx.rate) * 100), currency, locale);
+    const stale = fx.stale ? ' · cotización de respaldo' : '';
+    lines.push(`💱 ${escapeHtml(original)} × ${rate} (${escapeHtml(fxSourceLabel(fx.source))}${stale})`);
+  }
 
   const categoryName = category?.name || 'Sin categoría';
   const categoryEmoji = category?.emoji || FALLBACK_EMOJI;

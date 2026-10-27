@@ -22,6 +22,10 @@ export const TABLES = Object.freeze({
     'id', 'name', 'target_cents', 'saved_cents', 'deadline', 'user_id', 'category_id',
     'active', 'created_at', 'updated_at',
   ],
+  bills: [
+    'id', 'name', 'amount_cents', 'currency', 'due_date', 'status', 'recurrence', 'document_id',
+    'user_id', 'category_id', 'paid_at', 'created_at', 'updated_at',
+  ],
   settings: ['key', 'value', 'updated_at'],
   alert_events: ['id', 'key', 'category_id', 'threshold', 'period', 'sent_at', 'payload'],
   email_log: [
@@ -48,6 +52,7 @@ export const INTEGER_FIELDS = Object.freeze({
   transactions: ['amount_cents'],
   documents: ['total_cents'],
   goals: ['target_cents', 'saved_cents'],
+  bills: ['amount_cents'],
   alert_events: ['threshold'],
 });
 
