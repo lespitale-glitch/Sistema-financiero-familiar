@@ -35,8 +35,17 @@ log "2/4 whisper.cpp y ffmpeg (Homebrew)"
 if ! command -v brew >/dev/null 2>&1; then
   die "No encontré Homebrew. Instalalo desde https://brew.sh y volvé a correr este script."
 fi
-command -v whisper-cli >/dev/null 2>&1 || command -v whisper-cpp >/dev/null 2>&1 || brew install whisper-cpp
-command -v ffmpeg >/dev/null 2>&1 || brew install ffmpeg
+# No instala nada por su cuenta: si falta algo, muestra el --dry-run y se frena
+# para que lo revises antes (la Mac es compartida con otros servicios).
+MISSING=()
+command -v whisper-cli >/dev/null 2>&1 || command -v whisper-cpp >/dev/null 2>&1 || MISSING+=(whisper-cpp)
+command -v ffmpeg >/dev/null 2>&1 || MISSING+=(ffmpeg)
+if (( ${#MISSING[@]} > 0 )); then
+  echo "Faltan: ${MISSING[*]}. Esto es lo que haría Homebrew (no se instaló nada):"
+  brew install --dry-run "${MISSING[@]}" || true
+  die "Revisá el --dry-run. Si está todo bien, instalá a mano con: brew install ${MISSING[*]} y volvé a correr este script."
+fi
+echo "whisper.cpp y ffmpeg ya están instalados (se usan tal cual, sin modificarlos)."
 
 log "3/4 Modelo de voz: ggml-${MODEL_NAME}.bin"
 mkdir -p "$ROOT/models"
