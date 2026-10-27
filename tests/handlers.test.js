@@ -437,3 +437,69 @@ test('cada update queda en el log sin el texto del mensaje', async () => {
   assert.equal(lines[1].data.chatType, 'group');
   assert.ok(!JSON.stringify(lines).includes('pan'), 'no guarda el texto');
 });
+
+test('cada gasto confirmado trae el boton Borrar y se puede restaurar', async (t) => {
+  const { handleDelete } = await import('../src/bot/handlers.js');
+  const { harness, ctx } = await setup(t);
+  ctx.message = { text: 'gasté 1500 en el super' };
+  await handleText(ctx, harness.deps);
+
+  const confirmation = ctx.captured.find((entry) => entry.kind === 'reply' && /registrado/i.test(entry.html));
+  const button = confirmation.extra.reply_markup.inline_keyboard[0][0];
+  assert.equal(button.text, '🗑️ Borrar');
+  assert.match(button.callback_data, /^tx:del:/);
+
+  const [transaction] = await harness.repos.transactions.list({ limit: 1 });
+  const delCtx = createFakeCtx({ user: harness.user });
+  delCtx.callbackQuery = { data: button.callback_data };
+  await handleCallbackQuery(delCtx, harness.deps);
+  assert.equal((await harness.repos.transactions.get(transaction.id)).status, 'discarded');
+  assert.equal((await harness.repos.transactions.totals({})).expenseCents ?? 0, 0);
+  const deletedReply = delCtx.captured.find((entry) => entry.kind === 'reply');
+  assert.match(deletedReply.html, /Borrado/);
+  const restore = deletedReply.extra.reply_markup.inline_keyboard[0][0];
+  assert.match(restore.callback_data, /^tx:undo:/);
+
+  const undoCtx = createFakeCtx({ user: harness.user });
+  undoCtx.callbackQuery = { data: restore.callback_data };
+  await handleCallbackQuery(undoCtx, harness.deps);
+  assert.equal((await harness.repos.transactions.get(transaction.id)).status, 'confirmed');
+
+  // Borrar dos veces avisa que ya estaba borrado.
+  await handleCallbackQuery(delCtx, harness.deps);
+  const again = createFakeCtx({ user: harness.user });
+  again.callbackQuery = { data: button.callback_data };
+  await handleCallbackQuery(again, harness.deps);
+  assert.ok(again.captured.some((entry) => entry.kind === 'answer' && /Ya estaba borrado/.test(entry.data)));
+  void handleDelete;
+});
+
+test('/borrar lista con botones y /borrar <n> borra ese movimiento', async (t) => {
+  const { handleDelete } = await import('../src/bot/handlers.js');
+  const { harness, ctx } = await setup(t);
+  for (const text of ['gasté 100 en pan', 'gasté 2000 en nafta', 'gasté 300 en café']) {
+    await handleText(createFakeCtx({ user: harness.user, text }), harness.deps);
+  }
+
+  ctx.payload = '';
+  await handleDelete(ctx, harness.deps);
+  const list = ctx.captured.find((entry) => entry.kind === 'reply');
+  assert.match(list.html, /¿Cuál querés borrar\?/);
+  assert.equal(list.extra.reply_markup.inline_keyboard.length, 3);
+
+  const pickCtx = createFakeCtx({ user: harness.user });
+  pickCtx.payload = '2';
+  await handleDelete(pickCtx, harness.deps);
+  assert.match(allReplyText(pickCtx), /Borrado/);
+  const confirmed = await harness.repos.transactions.list({ status: 'confirmed', limit: 10 });
+  assert.equal(confirmed.length, 2);
+
+  const badCtx = createFakeCtx({ user: harness.user });
+  badCtx.payload = '9';
+  await handleDelete(badCtx, harness.deps);
+  assert.match(allReplyText(badCtx), /Indicá un número del 1 al 2/);
+
+  const recentCtx = createFakeCtx({ user: harness.user });
+  await handleRecent(recentCtx, harness.deps);
+  assert.match(allReplyText(recentCtx), /<b>1\.<\/b>/);
+});

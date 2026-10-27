@@ -32,7 +32,13 @@ import {
   escapeHtml,
   progressBar,
 } from '../utils/telegram-html.js';
-import { documentKeyboard, parseDocumentCallback } from './keyboards.js';
+import {
+  documentKeyboard,
+  parseDocumentCallback,
+  parseTransactionCallback,
+  restoreKeyboard,
+  transactionKeyboard,
+} from './keyboards.js';
 import { parseBillCallback, parseBillCommand } from '../services/bills.js';
 import {
   hasMoneySignal,
@@ -277,6 +283,7 @@ async function createFromParsed(ctx, deps, parsed, { source = 'text', metadata =
     return {
       result: null,
       summary: null,
+      keyboard: null,
       text: [
         `💱 ${escapeHtml(error.message)}`,
         '',
@@ -319,7 +326,8 @@ async function confirmationFor(deps, user, result) {
     text += '\n\n✅ <b>Movimiento registrado</b>';
   }
   text += budgetBlock(summary, result, deps);
-  return { result, text, summary };
+  const keyboard = result?.transaction?.id ? transactionKeyboard(result.transaction.id) : null;
+  return { result, text, summary, keyboard };
 }
 
 /** Mensaje de ayuda cuando el parser no pudo interpretar el texto. */
@@ -376,7 +384,8 @@ export const handleHelp = safe('help', async (ctx, deps) => {
     '• /gasto <code>&lt;monto&gt; &lt;categoría|#tag&gt; [nota]</code>',
     '• /ingreso <code>&lt;monto&gt; [categoría] [nota]</code>',
     '• /inversion <code>&lt;monto&gt; [categoría] [nota]</code>',
-    '• /movimientos <code>[n]</code> — últimos movimientos',
+    '• /movimientos <code>[n]</code> — últimos movimientos (numerados)',
+    '• /borrar <code>[número]</code> — borrar un movimiento cargado por error',
     '• Enviá texto libre: <code>Gasté 15.000 en el super #comida</code>',
     '• Enviá una foto de factura o un audio con el gasto',
     '',
@@ -922,11 +931,11 @@ async function handleQuickTransaction(ctx, deps, { defaultType, label, source = 
     return;
   }
 
-  const { text } = await createFromParsed(ctx, deps, parsed, {
+  const { text, keyboard } = await createFromParsed(ctx, deps, parsed, {
     source,
     metadata: { raw: payload },
   });
-  await replyHtml(ctx, text);
+  await replyHtml(ctx, text, keyboard ? { reply_markup: keyboard } : {});
 }
 
 export const handleExpenseCommand = safe('gasto', async (ctx, deps) =>
@@ -957,17 +966,17 @@ export const handleRecent = safe('movimientos', async (ctx, deps) => {
   const categoryMap = new Map(categories.map((category) => [category.id, category]));
   const userMap = new Map(users.map((user) => [user.id, user.name]));
   const lines = [`🧾 <b>Últimos ${transactions.length} movimientos</b>`, ''];
-  for (const transaction of transactions) {
+  transactions.forEach((transaction, index) => {
     const meta = TYPE_META[transaction.type] || TYPE_META.variable_expense;
     const category = categoryMap.get(transaction.categoryId);
     const date = formatDate(transaction.occurredAt, tzOf(deps)).slice(0, 5);
     const note = transaction.note || category?.name || meta.label;
     const userName = userMap.get(transaction.userId) || 'Familiar';
     lines.push(
-      `${meta.emoji} ${date} · ${escapeHtml(note)} · ${escapeHtml(userName)} · <b>${meta.sign}${formatCents(transaction.amountCents, currencyOf(deps), localeOf(deps))}</b>`,
+      `<b>${index + 1}.</b> ${meta.emoji} ${date} · ${escapeHtml(note)} · ${escapeHtml(userName)} · <b>${meta.sign}${formatCents(transaction.amountCents, currencyOf(deps), localeOf(deps))}</b>`,
     );
-  }
-  lines.push('', 'Exportá todo con /exportar.');
+  });
+  lines.push('', 'Borrá uno con <code>/borrar &lt;número&gt;</code> · Exportá todo con /exportar.');
   await replyHtml(ctx, lines.join('\n'));
 });
 
@@ -1097,11 +1106,11 @@ async function processIncomingText(ctx, deps, text, { source = 'text', metadata 
   });
 
   if (parsed?.ok && Number.isSafeInteger(parsed.amountCents) && parsed.amountCents > 0) {
-    const { text: confirmation } = await createFromParsed(ctx, deps, parsed, {
+    const { text: confirmation, keyboard } = await createFromParsed(ctx, deps, parsed, {
       source,
       metadata: { ...metadata, transcript: metadata.transcript ?? text, raw: text },
     });
-    await replyHtml(ctx, confirmation);
+    await replyHtml(ctx, confirmation, keyboard ? { reply_markup: keyboard } : {});
     return true;
   }
 
@@ -1383,6 +1392,11 @@ export const handleDocument = safe('document', async (ctx, deps) => {
 
 export const handleCallbackQuery = safe('callback', async (ctx, deps) => {
   const data = ctx.callbackQuery?.data ?? (Array.isArray(ctx.match) ? ctx.match[0] : '');
+  const txAction = parseTransactionCallback(data);
+  if (txAction) {
+    await handleTransactionCallback(ctx, deps, txAction);
+    return;
+  }
   const billAction = parseBillCallback(data);
   if (billAction) {
     await handleBillPaidCallback(ctx, deps, billAction.billId);
@@ -1582,6 +1596,97 @@ export const handleCorrect = safe('corregir', async (ctx, deps) => {
     reply_markup: documentKeyboard(updated.id),
   });
 });
+
+// ---------------------------------------------------------------------------
+// Borrar movimientos: /borrar y botones Borrar / Restaurar
+// ---------------------------------------------------------------------------
+
+const DELETE_LIST_SIZE = 10;
+
+function transactionLine(deps, transaction, categoryMap) {
+  const meta = TYPE_META[transaction.type] || TYPE_META.variable_expense;
+  const date = formatDate(transaction.occurredAt, tzOf(deps)).slice(0, 5);
+  const note = transaction.note || categoryMap?.get(transaction.categoryId)?.name || meta.label;
+  return `${meta.emoji} ${date} · ${escapeHtml(note)} · <b>${meta.sign}${formatCents(transaction.amountCents, currencyOf(deps), localeOf(deps))}</b>`;
+}
+
+/** Borra (status "discarded") o restaura un movimiento. No elimina la fila: se puede deshacer. */
+async function setTransactionDiscarded(deps, transactionId, discarded) {
+  const transaction = await deps.repos.transactions.get(transactionId);
+  if (!transaction) return { ok: false, reason: 'not-found' };
+  const target = discarded ? 'discarded' : 'confirmed';
+  if (transaction.status === target) return { ok: false, reason: 'unchanged', transaction };
+  const updated = await deps.repos.transactions.update(transaction.id, { status: target });
+  deps.logger?.info?.(discarded ? 'movimiento borrado' : 'movimiento restaurado', {
+    transactionId: transaction.id,
+    amountCents: transaction.amountCents,
+  });
+  return { ok: true, transaction: updated };
+}
+
+export const handleDelete = safe('borrar', async (ctx, deps) => {
+  const raw = String(ctx.payload || '').trim();
+  const [transactions, categories] = await Promise.all([
+    deps.repos.transactions.list({ limit: DELETE_LIST_SIZE, status: 'confirmed', order: 'desc' }),
+    deps.repos.categories.list({ includeInactive: true }),
+  ]);
+  const categoryMap = new Map(categories.map((category) => [category.id, category]));
+
+  if (!transactions.length) {
+    await replyHtml(ctx, '📭 No hay movimientos para borrar.');
+    return;
+  }
+
+  if (!raw) {
+    const lines = ['🗑️ <b>¿Cuál querés borrar?</b>', ''];
+    transactions.forEach((transaction, index) => lines.push(`<b>${index + 1}.</b> ${transactionLine(deps, transaction, categoryMap)}`));
+    lines.push('', 'Tocá el botón o escribí <code>/borrar 2</code>. Se puede restaurar después.');
+    const keyboard = {
+      inline_keyboard: transactions.map((transaction, index) => [{
+        text: `🗑️ ${index + 1}. ${formatCents(transaction.amountCents, currencyOf(deps), localeOf(deps))} ${String(transaction.note || '').slice(0, 24)}`.trim(),
+        callback_data: `tx:del:${transaction.id}`,
+      }]),
+    };
+    await replyHtml(ctx, lines.join('\n'), { reply_markup: keyboard });
+    return;
+  }
+
+  const index = Number.parseInt(raw, 10);
+  if (!Number.isInteger(index) || index < 1 || index > transactions.length) {
+    await replyHtml(ctx, `❌ Indicá un número del 1 al ${transactions.length}. Mirá la lista con /borrar.`);
+    return;
+  }
+  const transaction = transactions[index - 1];
+  const result = await setTransactionDiscarded(deps, transaction.id, true);
+  if (!result.ok) {
+    await replyHtml(ctx, 'ℹ️ Ese movimiento ya estaba borrado.');
+    return;
+  }
+  await replyHtml(ctx, `🗑️ <b>Borrado:</b> ${transactionLine(deps, transaction, categoryMap)}`, {
+    reply_markup: restoreKeyboard(transaction.id),
+  });
+});
+
+async function handleTransactionCallback(ctx, deps, action) {
+  const discard = action.action === 'delete';
+  const result = await setTransactionDiscarded(deps, action.transactionId, discard);
+  if (!result.ok) {
+    await answerCallback(ctx, result.reason === 'not-found'
+      ? 'No encontré el movimiento.'
+      : (discard ? 'Ya estaba borrado.' : 'Ya estaba registrado.'));
+    return;
+  }
+  const categories = await deps.repos.categories.list({ includeInactive: true });
+  const categoryMap = new Map(categories.map((category) => [category.id, category]));
+  const line = transactionLine(deps, result.transaction, categoryMap);
+  if (discard) {
+    await answerCallback(ctx, '🗑️ Borrado');
+    await replyHtml(ctx, `🗑️ <b>Borrado:</b> ${line}`, { reply_markup: restoreKeyboard(result.transaction.id) });
+  } else {
+    await answerCallback(ctx, '↩️ Restaurado');
+    await replyHtml(ctx, `↩️ <b>Restaurado:</b> ${line}`, { reply_markup: transactionKeyboard(result.transaction.id) });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Vencimientos: /vencimientos, /vence, /pagado y boton "Pagué"

@@ -328,6 +328,7 @@ Para Supabase, ejecutar antes `supabase/schema.sql` en el SQL Editor del proyect
 | `/ingreso <monto> <descripción>` | Registrar un ingreso. |
 | `/inversion <monto> <descripción>` | Registrar una inversión. |
 | `/movimientos` | Últimos movimientos. |
+| `/borrar [número]` | Borrar un movimiento cargado por error (con botón **Restaurar**). Cada confirmación trae también un botón **🗑️ Borrar**. |
 | `/categorias` | Listar categorías activas. |
 | `/nueva_categoria <nombre> [presupuesto]` | Crear una categoría. |
 | `/presupuesto_set <categoría> <monto>` | Ajustar el presupuesto de una categoría (o el general). |

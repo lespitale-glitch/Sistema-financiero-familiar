@@ -61,3 +61,36 @@ export function parseDocumentCallback(data) {
   if (!documentId) return null;
   return { action, documentId };
 }
+
+// ---------------------------------------------------------------------------
+// Movimientos: borrar / restaurar
+// ---------------------------------------------------------------------------
+
+export const TRANSACTION_CALLBACK_PREFIX = 'tx';
+
+/** Boton "Borrar" debajo de la confirmacion de un movimiento. */
+export function transactionKeyboard(transactionId) {
+  return {
+    inline_keyboard: [[
+      { text: '🗑️ Borrar', callback_data: `${TRANSACTION_CALLBACK_PREFIX}:del:${transactionId}` },
+    ]],
+  };
+}
+
+/** Boton "Restaurar" despues de borrar. */
+export function restoreKeyboard(transactionId) {
+  return {
+    inline_keyboard: [[
+      { text: '↩️ Restaurar', callback_data: `${TRANSACTION_CALLBACK_PREFIX}:undo:${transactionId}` },
+    ]],
+  };
+}
+
+/** Parsea "tx:del:<id>" o "tx:undo:<id>". */
+export function parseTransactionCallback(data) {
+  const parts = String(data || '').split(':');
+  if (parts[0] !== TRANSACTION_CALLBACK_PREFIX || !parts[2]) return null;
+  if (parts[1] === 'del') return { action: 'delete', transactionId: parts[2] };
+  if (parts[1] === 'undo') return { action: 'restore', transactionId: parts[2] };
+  return null;
+}
