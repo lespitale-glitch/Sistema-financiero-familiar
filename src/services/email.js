@@ -1,11 +1,12 @@
 import crypto from 'node:crypto';
 import { TYPE_META, TRANSACTION_SOURCES, TRANSACTION_TYPES } from '../domain.js';
-import { documentKeyboard } from '../bot/keyboards.js';
+import { documentKeyboard, transactionKeyboard } from '../bot/keyboards.js';
 import { formatCents, isPositiveCents } from '../utils/money.js';
 import { formatDate } from '../utils/dates.js';
 import { escapeHtml } from '../utils/telegram-html.js';
-import { parseTransactionMessage } from './parser.js';
+import { matchCategory, parseTransactionMessage } from './parser.js';
 import { buildPendingDocumentMessage } from './reports.js';
+import { isBankSender, parseBankAlert } from './bank-alerts.js';
 
 const SUPPORTED_EXTENSIONS = Object.freeze({
   jpg: 'image/jpeg',
@@ -208,6 +209,7 @@ export function createEmailService({ config, repos, services, logger, notifier, 
   const currency = config.app.currency;
   const locale = config.app.locale;
   const timezone = config.app.timezone;
+  const bankConfig = config.email?.bankAlerts || { enabled: false, senders: [] };
 
   let pollTimer = null;
   let pollInFlight = false;
@@ -262,6 +264,99 @@ export function createEmailService({ config, repos, services, logger, notifier, 
     return lines.join('\n');
   }
 
+  /** Familiar al que se le asignan los avisos del banco. */
+  async function bankOwner() {
+    const users = await repos.users.list();
+    const wanted = String(bankConfig.owner || '').trim().toLowerCase();
+    if (wanted) {
+      const match = users.find((user) => [user.telegramId, user.email, user.name]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase() === wanted));
+      if (match) return match;
+      logger?.warn?.('email: BANK_ALERT_OWNER no coincide con ningun familiar, uso el primero', { owner: bankConfig.owner });
+    }
+    return users[0] || null;
+  }
+
+  /**
+   * Aviso de movimiento del banco: lo registra (o lo ignora si es entre
+   * cuentas propias). Devuelve null si el email no es un aviso bancario.
+   */
+  async function handleBankAlert({ messageId, from, subject, text }) {
+    if (!bankConfig.enabled) return null;
+    const fromBank = isBankSender(from, bankConfig.senders);
+    // Tambien sirve si un familiar reenvia el aviso a mano.
+    const forwardedByFamily = !fromBank && /macro/i.test(`${subject}\n${text}`)
+      && Boolean(await services.users.resolveEmailUser(from));
+    if (!fromBank && !forwardedByFamily) return null;
+
+    const alert = parseBankAlert({ subject, text, timezone, now: clock() });
+    const owner = forwardedByFamily ? await services.users.resolveEmailUser(from) : await bankOwner();
+    const target = notificationTarget(config, owner);
+
+    if (!alert) {
+      if (!fromBank) return null; // reenvio de un familiar que no es aviso: sigue el flujo normal
+      logger?.warn?.('email: aviso del banco con formato desconocido', { messageId, from, subject });
+      await markLog({ messageId, fromAddress: from, subject, status: 'unparsed', error: 'aviso-bancario-no-reconocido' });
+      if (target) {
+        await notify(target, [
+          '🏦 <b>Llegó un aviso del banco que todavía no sé leer</b>',
+          subject ? `Asunto: ${escapeHtml(subject)}` : '',
+          '',
+          'Si era un gasto, cargalo a mano. Pasale el formato a quien mantiene el bot para sumarlo.',
+        ].filter((line) => line !== null).join('\n'));
+      }
+      return { ok: false, status: 'unparsed', httpStatus: 202, message: 'Aviso bancario con formato desconocido.' };
+    }
+
+    if (alert.ownTransfer && bankConfig.skipOwnTransfers) {
+      logger?.info?.('email: transferencia entre cuentas propias, no se registra', { messageId, amountCents: alert.amountCents });
+      await markLog({ messageId, fromAddress: from, subject, status: 'ignored', error: 'transferencia-propia' });
+      if (target) {
+        await notify(target, [
+          `↔️ Transferencia a tu cuenta de <b>${escapeHtml(alert.destination)}</b> por <b>${escapeHtml(formatCents(alert.amountCents, alert.currency, locale))}</b>.`,
+          'Es entre cuentas propias: no la cuento como gasto.',
+        ].join('\n'));
+      }
+      return { ok: true, status: 'ignored', httpStatus: 200, message: 'Transferencia entre cuentas propias.' };
+    }
+
+    if (!owner) {
+      await markLog({ messageId, fromAddress: from, subject, status: 'rejected', error: 'sin-familiar-para-asignar' });
+      return { ok: false, status: 'rejected', httpStatus: 409, message: 'No hay familiares configurados para asignar el aviso.' };
+    }
+
+    const categories = await repos.categories.list();
+    const categoryName = matchCategory(alert.merchant, categories)?.name || null;
+    const result = await services.transactions.create({
+      user: owner,
+      type: TRANSACTION_TYPES.VARIABLE_EXPENSE,
+      amountCents: alert.amountCents,
+      currency: alert.currency,
+      category: categoryName,
+      note: alert.kind === 'card'
+        ? `${alert.merchant} (${alert.cardType === 'credito' ? 'crédito' : 'débito'}${alert.viaMercadoPago ? ', Mercado Pago' : ''})`
+        : alert.merchant,
+      source: TRANSACTION_SOURCES.EMAIL,
+      occurredAt: alert.occurredAt,
+      metadata: { bank: alert.bank, bankKind: alert.kind, email: { messageId, from, subject } },
+      alertUserName: owner.name,
+    });
+    logger?.info?.('email: movimiento registrado desde aviso bancario', {
+      messageId,
+      bank: alert.bank,
+      kind: alert.kind,
+      transactionId: result.transaction.id,
+    });
+    await markLog({ messageId, fromAddress: from, subject, status: 'logged', transactionId: result.transaction.id });
+    if (target) {
+      await notify(target, buildTransactionMessage(result.transaction, result.category).replace('desde email', 'desde el banco'), {
+        reply_markup: transactionKeyboard(result.transaction.id),
+      });
+    }
+    return { ok: true, status: 'logged', transactionId: result.transaction.id, message: 'Movimiento registrado desde aviso bancario.' };
+  }
+
   function buildUnparsedMessage(subject) {
     const lines = [
       '📭 <b>Email recibido sin monto</b>',
@@ -314,6 +409,9 @@ export function createEmailService({ config, repos, services, logger, notifier, 
           message: 'El email ya fue procesado.',
         };
       }
+
+      const bankOutcome = await handleBankAlert({ messageId, from, subject, text });
+      if (bankOutcome) return bankOutcome;
 
       const user = await services.users.resolveEmailUser(from);
       if (!user) {

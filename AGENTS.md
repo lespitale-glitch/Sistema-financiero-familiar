@@ -72,6 +72,7 @@ Stack: **Node.js ESM**, Express, Telegraf, `dotenv`, `node:sqlite`, Gemini REST.
 | `src/services/local-engine.js` | Motor local macOS: ejecuta `bin/macos/finanzas-ocr` (Vision) y ffmpeg + whisper.cpp. |
 | `src/services/invoice-text.js` | Reglas para sacar total, vencimiento, emisor y categoría del texto de una factura. |
 | `src/services/bills.js` | Vencimientos: alta, agenda desde facturas, recordatorio, pagado y recurrencia mensual. |
+| `src/services/bank-alerts.js` | Interpreta avisos por email del Banco Macro (compras con tarjeta, transferencias; detecta transferencias entre cuentas propias). |
 | `src/services/fx.js` | Cotización USD→ARS (fija o dolarapi.com con caché). |
 | `src/services/email.js` | Ingesta HTTP/IMAP, deduplicación y OCR de adjuntos. |
 | `src/services/scheduler.js` | Resúmenes diario/semanal/mensual. |
@@ -247,6 +248,7 @@ Roles: `husband`, `wife`, `daughter`, `son`, `other`.
 | `LOCAL_OCR_BIN`, `LOCAL_OCR_LANGUAGES`, `LOCAL_WHISPER_MODEL`, `LOCAL_WHISPER_BIN`, `LOCAL_FFMPEG_BIN`, `LOCAL_WHISPER_THREADS`, `LOCAL_AI_TIMEOUT_MS` | No | ver `.env.example` | Motor local. |
 | `LOCAL_WHISPER_BUSY_PATTERN`, `LOCAL_WHISPER_MAX_WAIT_MIN`, `LOCAL_WHISPER_CHECK_SECONDS` | No | ver `.env.example`, `30`, `20` | La voz local espera si otro programa usa Whisper (Canal7, subtítulos). |
 | `DUE_REMINDERS_ENABLED`, `DUE_REMINDER_AT`, `DUE_REMINDER_DAYS` | No | `true`, `09:00`, `3,1,0` | Recordatorio de vencimientos. |
+| `BANK_ALERTS_ENABLED`, `BANK_ALERT_SENDERS`, `BANK_ALERT_OWNER`, `BANK_SKIP_OWN_TRANSFERS` | No | `true`, `macro.com.ar,bancomacro.com.ar`, primer familiar, `true` | Avisos bancarios por email. |
 | `USD_ARS_RATE`, `USD_RATE_SOURCE`, `FX_API_URL` | No | vacío, `oficial`, dolarapi.com | Cotización del dólar. |
 | `TRUST_PROXY` | No | `1` | Valor de Express `trust proxy` (saltos, `true`/`false` o lista de IPs). Nunca `true` en producción. |
 

@@ -40,7 +40,8 @@ src/
   bot/            Telegraf: index (auth), commands, handlers, keyboards
   db/             index (selector), sqlite-store, supabase-store, repositories, rows, schema.sql
   services/       transactions, budgets, alerts, reports, parser, gemini, ocr, email, scheduler, users, notifier,
-                  bills (vencimientos), fx (dolar), local-engine (Vision/whisper), invoice-text (reglas de facturas)
+                  bills (vencimientos), fx (dolar), local-engine (Vision/whisper), invoice-text (reglas de facturas),
+                  bank-alerts (avisos del Banco Macro por email)
   utils/          money (centavos), dates (zonas horarias), telegram-html
   web/server.js   Express: /healthz, /readyz, /api/*, webhook de Telegram, ingesta de email
 bin/macos/        finanzas-ocr.swift (el binario compilado y models/ no se suben)

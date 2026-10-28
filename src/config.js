@@ -202,6 +202,14 @@ export function loadConfig(env = process.env, { loadEnvFile = false } = {}) {
     },
     email: {
       forwardAddress: str(env.EMAIL_FORWARD_ADDRESS) || null,
+      bankAlerts: {
+        // Avisos de movimientos del banco (hoy Banco Macro) que llegan por email.
+        enabled: bool(env.BANK_ALERTS_ENABLED, true),
+        senders: list(env.BANK_ALERT_SENDERS).length ? list(env.BANK_ALERT_SENDERS) : ['macro.com.ar', 'bancomacro.com.ar'],
+        // A quien se le asignan: telegram id, email o nombre de FAMILY_MEMBERS (vacio = el primero).
+        owner: str(env.BANK_ALERT_OWNER) || null,
+        skipOwnTransfers: bool(env.BANK_SKIP_OWN_TRANSFERS, true),
+      },
       imap: {
         host: str(env.IMAP_HOST),
         port: int(env.IMAP_PORT, 993, { min: 1, max: 65535 }),

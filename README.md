@@ -16,6 +16,7 @@ Sistema financiero familiar autónomo con **bot de Telegram**, **OCR de facturas
 - [Comandos del bot](#comandos-del-bot)
 - [API HTTP](#api-http)
 - [Facturas, voz y email](#facturas-voz-y-email)
+- [Avisos del banco por email (Banco Macro)](#avisos-del-banco-por-email-banco-macro)
 - [Vencimientos](#vencimientos)
 - [Dólares](#dólares)
 - [Motor local en Mac (sin Gemini)](#motor-local-en-mac-sin-gemini)
@@ -404,6 +405,38 @@ Dos alternativas:
 - **IMAP poll** (opt-in): completar `IMAP_HOST`, `IMAP_USER` e `IMAP_PASSWORD`. Se revisan los no leídos cada `IMAP_POLL_SECONDS`. Requiere las dependencias opcionales `imapflow` y `mailparser` (ya declaradas en `package.json`).
 
 Los remitentes desconocidos se rechazan. Para autorizarlos, agregar su email en `FAMILY_MEMBERS`.
+
+---
+
+## Avisos del banco por email (Banco Macro)
+
+El bot registra solo cada compra con tarjeta (débito o crédito) y cada transferencia que el Banco Macro avisa por email. **No usa usuario ni clave del banco**: solo lee los avisos que el banco ya manda.
+
+- **Compra con tarjeta:** "ingresó una autorización de compra de $ 29.500,00 en el establecimiento MERPAGO*COMERCIO el día 13/10/2026 a las 19:42hs..." → gasto de $ 29.500 en "Comercio (débito, Mercado Pago)", con la fecha y hora de la compra.
+- **Transferencia a terceros:** se registra como gasto "Transferencia a Nombre".
+- **Transferencia "a tu cuenta de ..."** (entre cuentas propias): no se cuenta como gasto, solo se avisa.
+- **Aviso con un formato que no conoce:** avisa en Telegram y no registra nada.
+
+Cada gasto llega al chat con el botón **🗑️ Borrar**. No se guarda el número de tarjeta.
+
+Configuración recomendada (casilla aparte, para que el bot nunca tenga acceso a tu email personal):
+
+1. Crear una cuenta de Gmail nueva solo para esto (por ejemplo `finanzas.familia.bot@gmail.com`).
+2. En esa cuenta: activar la verificación en 2 pasos y crear una **contraseña de aplicación** (Cuenta de Google → Seguridad → Contraseñas de aplicaciones).
+3. En tu Gmail personal: Configuración → Reenvío y correo POP/IMAP → **Agregar una dirección de reenvío** con la casilla nueva, y confirmar el código que llega a esa casilla.
+4. En tu Gmail personal, crear un **filtro**: De `macro.com.ar` → Reenviar a la casilla nueva. Así solo se reenvían los avisos del banco, no el resto de tu correo.
+5. En `.env`:
+   ```env
+   IMAP_HOST=imap.gmail.com
+   IMAP_PORT=993
+   IMAP_SECURE=true
+   IMAP_USER=finanzas.familia.bot@gmail.com
+   IMAP_PASSWORD=<contraseña de aplicación>
+   IMAP_POLL_SECONDS=120
+   ```
+6. Reiniciar: `npm run servicio:reiniciar`.
+
+Seguridad: solo se aceptan remitentes de `BANK_ALERT_SENDERS`. Si el banco usa otra dirección, aparece en el log como remitente rechazado y se agrega ahí. Como cualquier email, el remitente se podría falsificar; por eso conviene que la dirección de la casilla nueva no se comparta. En el peor caso, un aviso falso solo agrega un gasto que se borra con un toque.
 
 ---
 
