@@ -291,6 +291,17 @@ test('/presupuesto_set actualiza el limite de una categoria', async (t) => {
   assert.match(allReplyText(ctx), /400\.000/);
 });
 
+test('/presupuesto_set con 0 quita el tope de la categoria', async (t) => {
+  const { harness, ctx } = await setup(t);
+  ctx.payload = 'Servicios 0';
+
+  await handleSetBudget(ctx, harness.deps);
+
+  const category = await harness.repos.categories.getByName('Servicios');
+  assert.equal(category.monthlyBudgetCents ?? null, null);
+  assert.match(allReplyText(ctx), /Quité el presupuesto/);
+});
+
 test('/metas incluye la meta creada', async (t) => {
   const { harness, ctx } = await setup(t);
   await harness.repos.goals.create({

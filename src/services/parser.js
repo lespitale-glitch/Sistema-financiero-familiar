@@ -812,6 +812,14 @@ export function parseBudgetUpdate(args) {
   let left = '';
   let amountText = '';
 
+  // "/presupuesto_set Servicios 0" o "... sin": quita el tope de esa categoria.
+  const removal = /^(.*?)(?:\s*=\s*|\s+)(?:0+(?:[.,]0+)?|sin|ninguno|quitar|borrar|sacar)$/i.exec(raw);
+  if (removal && cleanName(removal[1])) {
+    const name = cleanName(removal[1]);
+    const overall = overallAliases.has(normalizePhrase(name));
+    return { ...empty, ok: true, remove: true, categoryName: overall ? null : name, isOverall: overall };
+  }
+
   if (raw.includes('=')) {
     const [rawLeft, rawRight] = raw.split('=');
     left = cleanName(rawLeft);

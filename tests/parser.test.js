@@ -257,7 +257,11 @@ test('parseBudgetUpdate fija presupuesto de categoria o general', () => {
   assert.equal(noAmount.ok, false);
   assert.match(noAmount.error, /monto/i);
   const zero = parseBudgetUpdate('Comida 0');
-  assert.equal(zero.ok, false);
+  assert.equal(zero.ok, true);
+  assert.equal(zero.remove, true);
+  assert.equal(zero.categoryName, 'Comida');
+  assert.equal(parseBudgetUpdate('general sin').isOverall, true);
+  assert.equal(parseBudgetUpdate('Comida 100').remove, undefined);
 });
 
 test('parseGoalCreation y parseContribution.', () => {

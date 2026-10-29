@@ -409,7 +409,7 @@ export const handleHelp = safe('help', async (ctx, deps) => {
     '<b>Categorías y presupuestos</b>',
     '• /categorias — listar categorías activas',
     '• /nueva_categoria <code>Nombre | tipo | presupuesto</code>',
-    '• /presupuesto_set <code>&lt;categoría|general&gt; &lt;monto&gt;</code>',
+    '• /presupuesto_set <code>&lt;categoría|general&gt; &lt;monto&gt;</code> (con <code>0</code> lo quita)',
     '',
     '<b>Vencimientos</b>',
     '• /vencimientos — lo que hay que pagar (con botones de pagado)',
@@ -735,11 +735,18 @@ export const handleSetBudget = safe('presupuesto_set', async (ctx, deps) => {
   }
 
   const parsed = parseBudgetUpdate(payload);
-  if (!parsed?.ok || !Number.isSafeInteger(parsed.amountCents) || parsed.amountCents <= 0) {
+  const removing = Boolean(parsed?.ok && parsed.remove);
+  if (!parsed?.ok || (!removing && (!Number.isSafeInteger(parsed.amountCents) || parsed.amountCents <= 0))) {
     await replyHtml(ctx, [
       '🤔 No pude interpretar el presupuesto.',
       'Ejemplo: <code>/presupuesto_set Supermercado 400000</code>',
     ].join('\n'));
+    return;
+  }
+
+  if (removing && parsed.isOverall) {
+    await deps.repos.settings.set('budget.overall_cents', null);
+    await replyHtml(ctx, '✅ Quité el presupuesto general.');
     return;
   }
 
@@ -768,6 +775,11 @@ export const handleSetBudget = safe('presupuesto_set', async (ctx, deps) => {
   }
 
   const previous = target.monthlyBudgetCents;
+  if (removing) {
+    await deps.repos.categories.update(target.id, { monthlyBudgetCents: null });
+    await replyHtml(ctx, `✅ Quité el presupuesto de ${categoryEmoji(target)} ${escapeHtml(target.name)}. Ya no va a avisar por esa categoría.`);
+    return;
+  }
   const updated = await deps.repos.categories.update(target.id, { monthlyBudgetCents: parsed.amountCents });
   await replyHtml(ctx, [
     `✅ <b>Presupuesto actualizado</b> · ${categoryEmoji(updated)} ${escapeHtml(updated.name)}`,
