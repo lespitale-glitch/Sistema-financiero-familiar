@@ -503,3 +503,31 @@ test('/borrar lista con botones y /borrar <n> borra ese movimiento', async (t) =
   await handleRecent(recentCtx, harness.deps);
   assert.match(allReplyText(recentCtx), /<b>1\.<\/b>/);
 });
+
+test('en el grupo, un no autorizado queda en el log sin respuesta (salvo comandos)', async () => {
+  const { createAuthMiddleware } = await import('../src/bot/index.js');
+  const warnings = [];
+  const deps = {
+    logger: { warn: (msg, data) => warnings.push({ msg, data }), error: () => {} },
+    services: { users: { resolveTelegramUser: async () => ({ ok: false, reason: 'unknown-chat', message: 'no' }) } },
+  };
+  const middleware = createAuthMiddleware(deps);
+  const replies = [];
+  const make = (text, type) => ({
+    from: { id: 555 },
+    chat: { id: -100, type },
+    message: { text },
+    reply: async (html) => { replies.push(html); },
+  });
+  let nextCalled = false;
+  await middleware(make('hola, ¿quién busca a la nena?', 'supergroup'), async () => { nextCalled = true; });
+  assert.equal(nextCalled, false);
+  assert.equal(replies.length, 0, 'no responde charla del grupo');
+  assert.equal(warnings[0].data.fromId, 555, 'el ID queda en el log');
+
+  await middleware(make('/balance', 'supergroup'), async () => {});
+  assert.equal(replies.length, 1, 'a un comando sí le explica');
+
+  await middleware(make('hola', 'private'), async () => {});
+  assert.equal(replies.length, 2, 'en privado siempre responde');
+});

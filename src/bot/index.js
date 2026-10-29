@@ -92,6 +92,12 @@ export function createAuthMiddleware(deps) {
         chatId: ctx.chat?.id ?? null,
       });
       ctx.state.user = undefined;
+      // En grupos no se contesta a cada mensaje de alguien no autorizado (seria
+      // molesto en el chat familiar): queda en el log con su ID. Solo se
+      // responde si uso un comando, para que sepa por que no anda.
+      const isGroup = ['group', 'supergroup'].includes(ctx.chat?.type);
+      const isCommand = /^\//.test(String(ctx.message?.text || ''));
+      if (isGroup && !isCommand) return undefined;
       try {
         if (typeof ctx.reply === 'function') {
           await ctx.reply(
