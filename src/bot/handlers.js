@@ -15,6 +15,7 @@ import {
   TYPE_META,
 } from '../domain.js';
 import { familyTitle } from '../config.js';
+import { detectQuestion } from './questions.js';
 import {
   formatCents,
   parseAmountToCents,
@@ -403,6 +404,7 @@ export const handleHelp = safe('help', async (ctx, deps) => {
     '• /inversiones <code>[mes]</code> — inversiones y ahorro',
     '• /reporte <code>[mes]</code> — resumen completo del mes',
     '• /alertas — evaluar umbrales del mes actual',
+    '• O preguntá: <code>¿qué gastos tuve en octubre?</code>, <code>¿cómo venimos este mes?</code>',
     '',
     '<b>Categorías y presupuestos</b>',
     '• /categorias — listar categorías activas',
@@ -1100,9 +1102,30 @@ function greetingText(deps) {
   ].join('\n');
 }
 
+/** Consultas que se pueden hacer en lenguaje natural. */
+const QUESTION_HANDLERS = {
+  gastos: (ctx, deps) => handleExpenses(ctx, deps),
+  ingresos: (ctx, deps) => handleIncome(ctx, deps),
+  inversiones: (ctx, deps) => handleInvestments(ctx, deps),
+  balance: (ctx, deps) => handleBalance(ctx, deps),
+  presupuesto: (ctx, deps) => handleBudget(ctx, deps),
+  movimientos: (ctx, deps) => handleRecent(ctx, deps),
+  vencimientos: (ctx, deps) => handleBills(ctx, deps),
+};
+
 /** Procesa texto (libre o transcripto) y registra el movimiento si aplica. */
 async function processIncomingText(ctx, deps, text, { source = 'text', metadata = {}, fromVoice = false } = {}) {
   const isPrivate = (ctx.chat?.type || 'private') === 'private';
+
+  // "¿Qué gastos tuve en octubre?" es una consulta, no un movimiento.
+  const question = detectQuestion(text);
+  if (question && QUESTION_HANDLERS[question.command]) {
+    deps.logger?.info?.('telegram: consulta en lenguaje natural', { command: question.command, month: question.payload || 'actual' });
+    ctx.payload = question.payload;
+    await QUESTION_HANDLERS[question.command](ctx, deps);
+    return false;
+  }
+
   const categories = await deps.repos.categories.list();
   const parsed = parseTransactionMessage(text, {
     categories,

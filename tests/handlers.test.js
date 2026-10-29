@@ -123,6 +123,18 @@ test('texto libre registra el movimiento', async (t) => {
   assert.equal(transaction.note.toLowerCase().includes('super'), true);
 });
 
+test('una pregunta en texto libre responde con el detalle y no registra nada', async (t) => {
+  const { harness, ctx } = await setup(t);
+  ctx.message = { text: 'bot, que gastos tuve en octubre?' };
+
+  await handleText(ctx, harness.deps);
+
+  const transactions = await harness.repos.transactions.list({ limit: 5 });
+  assert.equal(transactions.length, 0);
+  assert.doesNotMatch(allReplyText(ctx), /No pude interpretar/);
+  assert.match(allReplyText(ctx), /octubre/i);
+});
+
 test('/ingreso crea un ingreso', async (t) => {
   const { harness, ctx } = await setup(t);
   ctx.payload = '250000 sueldo';
