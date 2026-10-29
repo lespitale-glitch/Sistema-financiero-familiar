@@ -31,7 +31,7 @@ function currencyFrom(symbol) {
   return /u\$s|usd|us\$/i.test(String(symbol || '')) ? 'USD' : 'ARS';
 }
 
-/** "MERPAGO*DONADOCARAPA" -> "Donadocarapa" ; "COTO SUC 45" -> "Coto Suc 45". */
+/** "MERPAGO*PANADERIA" -> "Panaderia" ; "COTO SUC 45" -> "Coto Suc 45". */
 export function cleanMerchant(raw) {
   const withoutProcessor = String(raw || '').trim().replace(PROCESSOR_PREFIXES, '');
   const viaMercadoPago = withoutProcessor !== String(raw || '').trim() && /^(?:MERPAGO|MERCADOPAGO|MP)\b/i.test(String(raw || '').trim());

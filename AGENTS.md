@@ -70,7 +70,7 @@ Stack: **Node.js ESM**, Express, Telegraf, `dotenv`, `node:sqlite`, Gemini REST.
 | `src/services/gemini.js` | Cliente REST de Gemini (texto, visión, audio). |
 | `src/services/ocr.js` | Extracción de facturas y transcripción de audio; elige Gemini o el motor local (`AI_PROVIDER`). |
 | `src/services/local-engine.js` | Motor local macOS: ejecuta `bin/macos/finanzas-ocr` (Vision) y ffmpeg + whisper.cpp. |
-| `src/services/invoice-text.js` | Reglas para sacar total, vencimiento, emisor y categoría del texto de una factura. |
+| `src/services/invoice-text.js` | Reglas para sacar total, vencimiento, emisor y categoría del texto de una factura; perfil tolerante para comprobantes de Mercado Pago (transferencia, pago en comercio, recarga). |
 | `src/services/bills.js` | Vencimientos: alta, agenda desde facturas, recordatorio, pagado y recurrencia mensual. |
 | `src/services/bank-alerts.js` | Interpreta avisos por email del Banco Macro (compras con tarjeta, transferencias; detecta transferencias entre cuentas propias). |
 | `src/services/fx.js` | Cotización USD→ARS (fija o dolarapi.com con caché). |

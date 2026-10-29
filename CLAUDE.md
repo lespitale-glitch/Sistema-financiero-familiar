@@ -66,6 +66,7 @@ supabase/         schema.sql para Supabase
 11. **Nunca registrar dólares como pesos**: todo monto en otra moneda pasa por `fx` en `transactions.create`; sin cotización se lanza `FX_UNAVAILABLE`.
 12. **El motor local no puede romper la app**: si falta un binario, se deshabilita OCR o voz y se loguea el motivo (`local.problems`).
 13. **La Mac es compartida (Canal7 + servidor de medios)**: antes de cambiar algo en la Mac, leer `~/Mac-reglas/REGLAS_MAC.md`. La voz local solo transcribe si nadie más usa Whisper (`pgrep`, solo lectura); nunca `pkill`/`kill` por patrón, ni `brew install` sin `--dry-run`.
+14. **Tests sin datos reales**: los ejemplos de facturas, avisos y comprobantes en `tests/` usan nombres, CVU, CUIT, teléfonos y tarjetas inventados, nunca los de los comprobantes reales de la familia.
 
 ## Antes de commitear
 

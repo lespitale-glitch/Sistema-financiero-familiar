@@ -54,7 +54,7 @@ const KNOWN_VENDORS = Object.freeze([
 
 // Palabras clave de total, de mas a menos especificas.
 const TOTAL_RULES = Object.freeze([
-  { pattern: /total a pagar|importe a pagar|monto a pagar|saldo a pagar|total a abonar|importe a abonar|total adeudado|su pago|pagar hasta/, weight: 4 },
+  { pattern: /total a pagar|importe a pagar|monto a pagar|saldo a pagar|total a abonar|importe a abonar|total adeudado|total pagado|monto pagado|su pago|pagar hasta/, weight: 4 },
   { pattern: /importe total|total factura|total general|total final|total con iva|total \$|\btotal\b/, weight: 2 },
 ]);
 const TOTAL_EXCLUDE = /sub ?total|total (?:iva|neto|gravado|no gravado|exento|impuestos?|percepciones?|bonificaci|descuentos?|de items|items|articulos|unidades)|cantidad|ahorro|vuelto|cambio|recibido|efectivo|tarjeta/;
@@ -64,7 +64,8 @@ const DUE_EXCLUDE = /proximo|siguiente|prox\./;
 const ISSUED_PATTERN = /fecha de emision|emision|fecha de factura|fecha factura|^fecha\b|\bfecha:/;
 
 const NUMERIC_DATE = /\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})\b/g;
-const TEXT_DATE = /\b(\d{1,2})\s*(?:de\s+)?(ene|feb|mar|abr|may|jun|jul|ago|sep|set|oct|nov|dic)[a-z]*\.?\s*(?:de\s+|del\s+)?(\d{4}|\d{2})?\b/g;
+// Acepta "05 de noviembre de 2026", "28/octubre/2026", "28-oct-26" y "28/oct - 11:27" (sin año).
+const TEXT_DATE = /\b(\d{1,2})\s*(?:de\s+|[/.-]\s*)?(ene|feb|mar|abr|may|jun|jul|ago|sep|set|oct|nov|dic)[a-z]*\.?\s*(?:de\s+|del\s+|[/.-]\s*)?(\d{4}|\d{2}(?![:\d]))?\b/g;
 const AMOUNT_TOKEN = /(?:\$|ars|u\$s|us\$|usd)?\s*(\d{1,3}(?:[.\s]\d{3})+(?:,\d{1,2})?|\d+(?:[.,]\d{1,2})?)(?![\d/])/gi;
 
 function normalizeLine(line) {
@@ -212,6 +213,129 @@ function detectCurrency(fullText) {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Comprobantes de Mercado Pago (transferencias, pagos en comercios, recargas)
+// ---------------------------------------------------------------------------
+
+const MP_MARKERS = /mercado ?pago|dinero disponible|n\.?\s*º?\s*de operaci[oó]n|origen y destino|pago en tienda/;
+const MP_NOT_A_NAME = /mercado ?pago|cvu|cbu|cuit|cuil|alias|banco|bco\b|operaci|motivo|comprobante|origen|destino|aprobad|rechazad|pendiente|medio de pago|dinero disponible|tienda|online|categor|ubicaci|acciones|agregar|denunciar|detalle|total|fecha|hora|usuario|asistente|transfer|enviad|recibid|compart|descarg|ayuda|^de$|^para$/;
+const MP_CATEGORY_MAP = Object.freeze({
+  'comidas y bebidas': 'Comida',
+  restaurantes: 'Comida',
+  'delivery': 'Comida',
+  supermercado: 'Supermercado',
+  supermercados: 'Supermercado',
+  transporte: 'Transporte',
+  combustible: 'Transporte',
+  servicios: 'Servicios',
+  recargas: 'Servicios',
+  'recarga de celular': 'Servicios',
+  salud: 'Salud',
+  farmacia: 'Salud',
+  entretenimiento: 'Entretenimiento',
+  hogar: 'Hogar',
+  educacion: 'Educacion',
+});
+
+/** Renglon que parece un nombre (persona o comercio), tolerante a mayusculas y acentos. */
+function looksLikeName(line) {
+  const raw = String(line || '').trim();
+  const normalized = normalizeLine(raw);
+  if (normalized.length < 3 || normalized.length > 60) return false;
+  if (!/[a-z]{2,}/.test(normalized) || /\d{3,}/.test(normalized) || /\$/.test(raw)) return false;
+  if (MP_NOT_A_NAME.test(normalized)) return false;
+  if (findDates(raw, { defaultYear: 2000 }).length) return false;
+  return true;
+}
+
+function firstHeadlineAmount(lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const amount = findAmounts(lines[index]).find((candidate) => candidate.hasSymbol);
+    if (amount) return { ...amount, line: index };
+  }
+  return null;
+}
+
+function mercadoPagoCategory(lines, categories) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const normalized = normalizeLine(lines[index]);
+    const inline = /^categor[ií]a[:\s]+(.+)$/.exec(normalized);
+    const value = inline ? inline[1] : (/^categor[ií]a$/.test(normalized) ? normalizeLine(lines[index + 1] || '') : null);
+    if (!value) continue;
+    const mapped = MP_CATEGORY_MAP[value] || Object.entries(MP_CATEGORY_MAP).find(([key]) => value.includes(key))?.[1];
+    const found = mapped && categories.find((category) => normalizeLine(category.name) === normalizeLine(mapped));
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * Datos de un comprobante de Mercado Pago o null si no lo es. Busca por
+ * palabras clave (no por posicion), asi tolera capturas con otro tamaño,
+ * orden o recorte.
+ */
+export function extractMercadoPago(lines, { categories = [], defaultYear } = {}) {
+  const fullText = normalizeLine(lines.join(' \n '));
+  if (!MP_MARKERS.test(fullText)) return null;
+
+  // Vision une en un renglon los bloques a la misma altura ("Burger King  $10.900"):
+  // se trabaja por bloques para que el orden o la posicion no importen.
+  const segments = lines.flatMap((line) => line.split(/\s{2,}/)).map((segment) => segment.trim()).filter(Boolean);
+  const headline = firstHeadlineAmount(segments);
+  const motivoMatch = lines.map((line) => /motivo[:\s]+(.+?)(?:\s{2,}|$)/i.exec(line)).find(Boolean);
+  const motivo = motivoMatch ? motivoMatch[1].trim() : null;
+  let issuedDate = null;
+  for (const line of lines) {
+    const dates = findDates(line, { defaultYear });
+    if (dates.length) { issuedDate = dates[0]; break; }
+  }
+
+  const isTransfer = /comprobante de transferencia|origen y destino|transferiste|transferencia (?:enviada|realizada|exitosa)/.test(fullText);
+  if (isTransfer) {
+    const start = segments.findIndex((segment) => /origen y destino|^de$|^para$/.test(normalizeLine(segment)));
+    const names = segments.slice(start >= 0 ? start + 1 : 0).filter(looksLikeName);
+    const destination = names.length >= 2 ? names[1] : (names[0] || null);
+    return {
+      kind: 'transfer',
+      vendor: destination ? `Transferencia a ${destination.replace(/\s+/g, ' ').trim()}` : 'Transferencia (Mercado Pago)',
+      description: motivo ? `Motivo: ${motivo}` : 'Transferencia por Mercado Pago',
+      total: headline?.text || null,
+      issued_date: issuedDate,
+      category: null,
+      type: TRANSACTION_TYPES.VARIABLE_EXPENSE,
+      found: { amount: Boolean(headline), party: Boolean(destination) },
+    };
+  }
+
+  // Pago en comercio / recarga: comercio conocido, o el nombre cerca del monto destacado.
+  const known = KNOWN_VENDORS.find((vendor) => vendor.pattern.test(fullText));
+  let merchant = known?.name || null;
+  if (!merchant && headline) {
+    const sameBlock = segments[headline.line].replace(/(?:\$|ars|u\$s|us\$|usd)\s*[\d.,\s]+/i, ' ').trim();
+    const around = [
+      sameBlock,
+      ...segments.slice(headline.line + 1, headline.line + 4),
+      ...segments.slice(Math.max(0, headline.line - 2), headline.line).reverse(),
+    ];
+    merchant = around.find(looksLikeName)?.trim() || null;
+  }
+  const recarga = /recarga de celular|recarga/.test(fullText);
+  const mpCategory = mercadoPagoCategory(lines, categories)
+    || (recarga ? categories.find((category) => category.name === 'Servicios') : null)
+    || (known?.hint ? matchCategory(known.hint, categories) : null)
+    || (merchant ? matchCategory(merchant, categories) : null);
+  return {
+    kind: 'payment',
+    vendor: merchant,
+    description: recarga ? `Recarga de celular${merchant ? ` ${merchant}` : ''}` : (merchant ? `Pago en ${merchant}` : 'Pago con Mercado Pago'),
+    total: headline?.text || null,
+    issued_date: issuedDate,
+    category: mpCategory?.name || null,
+    type: mpCategory?.type === TRANSACTION_TYPES.FIXED_EXPENSE ? TRANSACTION_TYPES.FIXED_EXPENSE : TRANSACTION_TYPES.VARIABLE_EXPENSE,
+    found: { amount: Boolean(headline), party: Boolean(merchant) },
+  };
+}
+
 /**
  * @param {string} text Texto del OCR (una linea por renglon).
  * @param {{categories?: object[], now?: Date, defaultYear?: number}} [options]
@@ -221,6 +345,26 @@ export function extractInvoiceFields(text, { categories = [], now = new Date(), 
   const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const fullText = normalizeLine(lines.join(' \n '));
   const year = defaultYear || now.getUTCFullYear();
+
+  const mp = extractMercadoPago(lines, { categories, defaultYear: year });
+  if (mp && mp.total) {
+    let confidence = 0.5;
+    if (mp.found.amount) confidence += 0.25;
+    if (mp.found.party) confidence += 0.15;
+    if (mp.issued_date) confidence += 0.05;
+    return {
+      vendor: mp.vendor,
+      description: mp.description,
+      total: mp.total,
+      currency: detectCurrency(fullText),
+      due_date: null,
+      issued_date: mp.issued_date,
+      category: mp.category,
+      type: mp.type,
+      confidence: Number(confidence.toFixed(2)),
+      line_items: [],
+    };
+  }
 
   const total = findTotal(lines);
   const dueDate = findDueDate(lines, year);

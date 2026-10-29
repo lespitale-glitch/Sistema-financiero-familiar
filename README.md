@@ -500,6 +500,14 @@ npm run servicio:quitar     # lo detiene y borra solo su LaunchAgent
 
 Corre con `nice 10` (baja prioridad, para no competir con otros servicios) y su log queda en `logs/finanzas.log`.
 
+Comprobantes de **Mercado Pago** reconocidos (captura o PDF), sin depender de la posición exacta de cada dato:
+
+- **Transferencia:** monto destacado, destinatario (no el origen), motivo y fecha ("28/octubre/2026"). Ignora CVU, CUIT, número de operación y publicidad.
+- **Pago en comercio:** monto, comercio, fecha ("28/oct - 11:27") y la categoría de Mercado Pago (por ejemplo "Comidas y bebidas" → Comida).
+- **Comprobante de pago / recarga (PDF):** "Total pagado", empresa (Claro, Personal, Movistar...) y fecha.
+
+Funciona aunque la captura esté recortada, cambie el tamaño o el orden de los bloques, o el monto y el nombre queden en el mismo renglón.
+
 Limitaciones frente a Gemini:
 
 - Las reglas encuentran bien "Total a pagar", "Importe total", "TOTAL" y los vencimientos, pero un formato muy raro puede requerir `/corregir`. La vista previa siempre muestra lo detectado antes de confirmar.

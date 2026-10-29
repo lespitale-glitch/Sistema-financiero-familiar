@@ -25,14 +25,14 @@ const DEBITO = {
   subject: 'Aviso de compra con Tarjeta de Débito VISA',
   text: `Estimado Cliente:
 Queremos informarte que ingresó una autorización de compra de $ 29.500,00 en el establecimiento
-MERPAGO*DONADOCARAPA el día 13/10/2026 a las 19:42hs, con la Tarjeta de Débito VISA de LEANDRO E
-SPITALE finalizada en 4578.
+MERPAGO*PANADERIAEJEMPLO el día 13/10/2026 a las 19:42hs, con la Tarjeta de Débito VISA de JUAN P
+EJEMPLO finalizada en 9876.
 Si no lo reconocés o tenés alguna consulta, podés comunicarte con el Centro de Atención Telefónica al 0810-666-1221`,
 };
 
 const TRANSFERENCIA_PROPIA = {
   subject: '¡Tu transferencia fue exitosa!',
-  text: `Hola Spitale Leandro Emanuel
+  text: `Hola Ejemplo Juan Pablo
 Enviamos tu transferencia de $100.000,00 a tu cuenta de Bco. Nacion Argentina a través de App Macro.
 Si vos no hiciste esta transacción o tenés alguna duda, por favor, comunicate a nuestro Centro de Atención Telefónica: 0810-555-7353.`,
 };
@@ -43,11 +43,11 @@ test('parser: compra con débito (monto, comercio, fecha y hora local)', () => {
   assert.equal(alert.cardType, 'debito');
   assert.equal(alert.amountCents, 2_950_000);
   assert.equal(alert.currency, 'ARS');
-  assert.equal(alert.merchant, 'Donadocarapa');
+  assert.equal(alert.merchant, 'Panaderiaejemplo');
   assert.equal(alert.viaMercadoPago, true);
   assert.equal(alert.occurredAt, '2026-10-13T22:42:00.000Z'); // 19:42 en Buenos Aires
   assert.equal(alert.ownTransfer, false);
-  assert.ok(!JSON.stringify(alert).includes('4578'), 'no guarda la tarjeta');
+  assert.ok(!JSON.stringify(alert).includes('9876'), 'no guarda la tarjeta');
 });
 
 test('parser: transferencia a cuenta propia y a terceros', () => {
@@ -89,7 +89,7 @@ async function setup(t, env = {}) {
   const config = loadConfig({
     NODE_ENV: 'test',
     SQLITE_PATH: tempDbPath(),
-    FAMILY_MEMBERS: 'Leandro|husband|119|leandro@example.com;Ana|wife|222|ana@example.com',
+    FAMILY_MEMBERS: 'Juan|husband|119|juan@example.com;Ana|wife|222|ana@example.com',
     FAMILY_CHAT_ID: '999',
     TZ,
     CURRENCY: 'ARS',
@@ -123,9 +123,9 @@ test('email del Macro: la compra con débito se registra sola con botón Borrar'
   assert.equal(transaction.amountCents, 2_950_000);
   assert.equal(transaction.source, 'email');
   assert.equal(transaction.occurredAt, '2026-10-13T22:42:00.000Z');
-  assert.match(transaction.note, /Donadocarapa \(débito, Mercado Pago\)/);
-  const leandro = await repos.users.getByTelegramId('119');
-  assert.equal(transaction.userId, leandro.id, 'por defecto se asigna al primer familiar');
+  assert.match(transaction.note, /Panaderiaejemplo \(débito, Mercado Pago\)/);
+  const juan = await repos.users.getByTelegramId('119');
+  assert.equal(transaction.userId, juan.id, 'por defecto se asigna al primer familiar');
 
   assert.equal(messages.length, 1);
   assert.match(messages[0].html, /desde el banco/);
