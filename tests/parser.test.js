@@ -134,6 +134,15 @@ test('montos negativos o inválidos se rechazan', () => {
   assert.match(parsed.warnings.join(' '), /cero/i);
 });
 
+test('un monto con signo menos no se registra como gasto positivo', () => {
+  for (const text of ['-12345,67', '- $ 1.500', '-100 super']) {
+    const parsed = parseTransactionMessage(text, NOW_OPTS);
+    assert.equal(parsed.ok, false, text);
+    assert.equal(parsed.reason, 'negative-amount', text);
+  }
+  assert.equal(parseTransactionMessage('super 1500 - 200', NOW_OPTS).reason, undefined);
+});
+
 // ---------------------------------------------------------------------------
 //ificacion completa de movimientos
 // ---------------------------------------------------------------------------

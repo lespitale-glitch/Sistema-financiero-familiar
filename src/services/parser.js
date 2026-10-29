@@ -534,6 +534,13 @@ export function parseTransactionMessage(message, options = {}) {
     return buildResult({ ...base, reason: 'empty', occurredAt: effectiveNow.toISOString() });
   }
 
+  // "-1500": un monto con signo menos suele ser un intento de descontar o
+  // anular; no se registra como gasto positivo (para eso esta /borrar).
+  if (/^\s*[-−–]\s*(?:u\$s|us\$|usd|\$)?\s*\d/i.test(raw)) {
+    base.warnings.push('El monto es negativo.');
+    return buildResult({ ...base, reason: 'negative-amount', confidence: 0.05 });
+  }
+
   let typeInfo = forceType
     ? { type: normalizedDefault, explicit: true }
     : detectType(raw, normalizedDefault);

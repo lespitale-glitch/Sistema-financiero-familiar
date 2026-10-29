@@ -39,7 +39,7 @@ const KNOWN_VENDORS = Object.freeze([
   { pattern: /\babl\b|\bagip\b|alumbrado,? barrido/, name: 'ABL (AGIP)', hint: 'servicio', fixed: true },
   { pattern: /\barba\b/, name: 'ARBA', hint: 'servicio', fixed: true },
   { pattern: /\bcoto\b/, name: 'Coto', hint: 'supermercado', fixed: false },
-  { pattern: /\bcarrefour\b/, name: 'Carrefour', hint: 'supermercado', fixed: false },
+  { pattern: /\bcarrefour\b|-carr\b/, name: 'Carrefour', hint: 'supermercado', fixed: false },
   { pattern: /\bjumbo\b/, name: 'Jumbo', hint: 'supermercado', fixed: false },
   { pattern: /\bdisco\b/, name: 'Disco', hint: 'supermercado', fixed: false },
   { pattern: /\bvea\b/, name: 'Vea', hint: 'supermercado', fixed: false },
@@ -194,15 +194,22 @@ function findIssuedDate(lines, defaultYear) {
   return null;
 }
 
+/** Señales de ticket de supermercado (aunque la foto no muestre el logo). */
+const SUPERMARKET_TICKET = /\bx\s*kg\b|\d+\s*x\s*\d+[.,]\d{3}\s*x|subtotal sin descuentos|precio contado|\bahorro\s*\$|descuentos\b.*\n.*-\s*\d|\bpvp\b/;
+/** Renglones de producto (no son el nombre del comercio). */
+const PRODUCT_LINE = /\bx\s*(?:kg|kgs|un|u|lt|lts|gr)\b|^\d+\s*x\s|^\d{8,}|\(\d+[.,]\d+%\)/;
+
 function findVendor(lines, fullText) {
   for (const vendor of KNOWN_VENDORS) {
     if (vendor.pattern.test(fullText)) return vendor;
   }
-  // Primera linea con letras que no sea un rotulo fiscal.
+  // Ticket recortado sin logo: mejor sin comercio que con un producto como comercio.
+  if (SUPERMARKET_TICKET.test(fullText)) return null;
+  // Primera linea con letras que no sea un rotulo fiscal ni un producto.
   const skip = /^(factura|original|duplicado|ticket|comprobante|recibo|cuit|iva|responsable|ingresos brutos|inicio de|fecha|nro|n°|cod|codigo|tipo|pagina|hoja|[a-c]$)/;
   for (const line of lines.slice(0, 8)) {
     const normalized = normalizeLine(line);
-    if (normalized.length < 3 || !/[a-z]{3,}/.test(normalized) || skip.test(normalized)) continue;
+    if (normalized.length < 3 || !/[a-z]{3,}/.test(normalized) || skip.test(normalized) || PRODUCT_LINE.test(normalized)) continue;
     return { name: line.trim().replace(/\s{2,}/g, ' ').slice(0, 60), hint: null, fixed: false, guessed: true };
   }
   return null;
@@ -346,7 +353,10 @@ export function extractInvoiceFields(text, { categories = [], now = new Date(), 
   const fullText = normalizeLine(lines.join(' \n '));
   const year = defaultYear || now.getUTCFullYear();
 
-  const mp = extractMercadoPago(lines, { categories, defaultYear: year });
+  const mp = extractMercadoPago(lines, {
+    categories: categories.filter((category) => [TRANSACTION_TYPES.FIXED_EXPENSE, TRANSACTION_TYPES.VARIABLE_EXPENSE].includes(category.type)),
+    defaultYear: year,
+  });
   if (mp && mp.total) {
     let confidence = 0.5;
     if (mp.found.amount) confidence += 0.25;
@@ -372,12 +382,17 @@ export function extractInvoiceFields(text, { categories = [], now = new Date(), 
   const vendor = findVendor(lines, fullText);
   const currency = detectCurrency(fullText);
 
+  // Un comprobante es un gasto: nunca se clasifica como ingreso o inversion por
+  // palabras sueltas del ticket ("AHORRO $ 500" = descuento, no la categoria Ahorro).
+  const expenseCategories = categories.filter((category) => [TRANSACTION_TYPES.FIXED_EXPENSE, TRANSACTION_TYPES.VARIABLE_EXPENSE].includes(category.type));
+  const isSupermarketTicket = SUPERMARKET_TICKET.test(fullText);
   const categoryText = [vendor?.hint, vendor?.name, lines.slice(0, 15).join(' ')].filter(Boolean).join(' ');
-  const category = (vendor?.hint && matchCategory(vendor.hint, categories)) || matchCategory(categoryText, categories);
+  const category = (vendor?.hint && matchCategory(vendor.hint, expenseCategories))
+    || (isSupermarketTicket ? matchCategory('supermercado', expenseCategories) : null)
+    || matchCategory(categoryText, expenseCategories);
 
   let type = TRANSACTION_TYPES.VARIABLE_EXPENSE;
   if (category?.type === TRANSACTION_TYPES.FIXED_EXPENSE || vendor?.fixed || dueDate) type = TRANSACTION_TYPES.FIXED_EXPENSE;
-  if (category?.type === TRANSACTION_TYPES.INVESTMENT) type = TRANSACTION_TYPES.INVESTMENT;
 
   // Confianza: cuanto de lo importante se encontro por regla explicita.
   let confidence = 0.2;
@@ -390,7 +405,7 @@ export function extractInvoiceFields(text, { categories = [], now = new Date(), 
 
   return {
     vendor: vendor?.name || null,
-    description: vendor?.name ? `Factura ${vendor.name}` : null,
+    description: vendor?.name ? `Factura ${vendor.name}` : (isSupermarketTicket ? 'Compra supermercado' : null),
     total: total ? total.text : null,
     currency,
     due_date: dueDate,

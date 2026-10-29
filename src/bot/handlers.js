@@ -332,6 +332,12 @@ async function confirmationFor(deps, user, result) {
 
 /** Mensaje de ayuda cuando el parser no pudo interpretar el texto. */
 function parseHint(parsed, example) {
+  if (parsed?.reason === 'negative-amount') {
+    return [
+      '⚠️ No registro montos negativos.',
+      'Para anular un movimiento que quedó mal usá /borrar.',
+    ].join('\n');
+  }
   const reason = parsed?.reason ? ` (${parsed.reason})` : '';
   return [
     `🤔 No pude interpretar el movimiento${escapeHtml(reason)}.`,
@@ -1112,6 +1118,11 @@ async function processIncomingText(ctx, deps, text, { source = 'text', metadata 
     });
     await replyHtml(ctx, confirmation, keyboard ? { reply_markup: keyboard } : {});
     return true;
+  }
+
+  if (parsed?.reason === 'negative-amount') {
+    await replyHtml(ctx, parseHint(parsed, ''));
+    return false;
   }
 
   if (fromVoice) {
