@@ -6,7 +6,7 @@ import { formatDate } from '../utils/dates.js';
 import { escapeHtml } from '../utils/telegram-html.js';
 import { matchCategory, parseTransactionMessage } from './parser.js';
 import { buildPendingDocumentMessage } from './reports.js';
-import { isBankSender, parseBankAlert } from './bank-alerts.js';
+import { isBankSender, parseBankAlert, parseCardStatement } from './bank-alerts.js';
 
 const SUPPORTED_EXTENSIONS = Object.freeze({
   jpg: 'image/jpeg',
@@ -282,17 +282,64 @@ export function createEmailService({ config, repos, services, logger, notifier, 
    * Aviso de movimiento del banco: lo registra (o lo ignora si es entre
    * cuentas propias). Devuelve null si el email no es un aviso bancario.
    */
+  /**
+   * Resumen de tarjeta: se agenda como vencimiento (pesos y, si hay, dolares).
+   * No se registra como gasto: las compras ya entraron una por una.
+   */
+  async function handleCardStatement({ messageId, from, subject, statement, owner, target }) {
+    if (typeof services.bills?.add !== 'function') {
+      await markLog({ messageId, fromAddress: from, subject, status: 'ignored', error: 'vencimientos-deshabilitados' });
+      return { ok: true, status: 'ignored', httpStatus: 200, message: 'Vencimientos deshabilitados.' };
+    }
+    const existing = await repos.bills.list({ status: null, from: statement.dueDate, to: statement.dueDate });
+    const parts = [
+      { name: statement.name, amountCents: statement.pesosCents, currency: 'ARS' },
+      { name: `${statement.name} (dólares)`, amountCents: statement.dollarsCents, currency: 'USD' },
+    ].filter((part) => isPositiveCents(part.amountCents));
+    const created = [];
+    for (const part of parts) {
+      if (existing.some((bill) => bill.name === part.name)) continue;
+      created.push(await services.bills.add({
+        name: part.name,
+        amountCents: part.amountCents,
+        currency: part.currency,
+        dueDate: statement.dueDate,
+        userId: owner?.id || null,
+      }));
+    }
+    logger?.info?.('email: resumen de tarjeta agendado como vencimiento', {
+      messageId, dueDate: statement.dueDate, created: created.length, duplicated: parts.length - created.length,
+    });
+    await markLog({ messageId, fromAddress: from, subject, status: created.length ? 'logged' : 'ignored', error: created.length ? null : 'resumen-ya-agendado' });
+    if (target && created.length) {
+      const [, month, day] = statement.dueDate.split('-');
+      const lines = [
+        `💳 <b>Resumen de ${escapeHtml(statement.name)}</b>`,
+        `Vence el <b>${day}/${month}</b>`,
+      ];
+      if (isPositiveCents(statement.pesosCents)) lines.push(`En pesos: <b>${escapeHtml(formatCents(statement.pesosCents, 'ARS', locale))}</b>`);
+      if (isPositiveCents(statement.dollarsCents)) lines.push(`En dólares: <b>${escapeHtml(formatCents(statement.dollarsCents, 'USD', locale))}</b>`);
+      if (isPositiveCents(statement.minimumCents)) lines.push(`Pago mínimo: ${escapeHtml(formatCents(statement.minimumCents, 'ARS', locale))}`);
+      lines.push('', 'Lo agendé en /vencimientos (te aviso antes). No lo cuento como gasto: las compras ya están cargadas una por una.');
+      await notify(target, lines.join('\n'));
+    }
+    return { ok: true, status: created.length ? 'scheduled' : 'ignored', httpStatus: 200, message: 'Resumen de tarjeta agendado.' };
+  }
+
   async function handleBankAlert({ messageId, from, subject, text }) {
     if (!bankConfig.enabled) return null;
     const fromBank = isBankSender(from, bankConfig.senders);
     // Tambien sirve si un familiar reenvia el aviso a mano.
-    const forwardedByFamily = !fromBank && /macro/i.test(`${subject}\n${text}`)
+    const forwardedByFamily = !fromBank && /macro|e-?resumen/i.test(`${subject}\n${text}`)
       && Boolean(await services.users.resolveEmailUser(from));
     if (!fromBank && !forwardedByFamily) return null;
 
     const alert = parseBankAlert({ subject, text, timezone, now: clock() });
     const owner = forwardedByFamily ? await services.users.resolveEmailUser(from) : await bankOwner();
     const target = notificationTarget(config, owner);
+
+    const statement = parseCardStatement({ subject, text });
+    if (statement) return handleCardStatement({ messageId, from, subject, statement, owner, target });
 
     if (!alert) {
       if (!fromBank) return null; // reenvio de un familiar que no es aviso: sigue el flujo normal

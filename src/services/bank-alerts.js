@@ -12,6 +12,9 @@
  *  - "¡Tu transferencia fue exitosa!": "Enviamos tu transferencia de
  *    $100.000,00 a tu cuenta de Bco. Nacion Argentina a través de App Macro."
  *    "a tu cuenta de ..." = transferencia entre cuentas propias (no es gasto).
+ *  - "E-Resumen de Tarjeta" (Visa / Mastercard): "Vencimiento: 11-Nov-26 Saldo en
+ *    Pesos: $320473,00 Saldo en Dólares: $15,94 Pago mínimo en pesos: $46.830,00".
+ *    Es un vencimiento a pagar, NO un gasto (las compras ya se cargaron una por una).
  */
 
 import { parseAmountToCents } from '../utils/money.js';
@@ -55,6 +58,67 @@ export function isBankSender(from, allowed = []) {
     if (rule.includes('@')) return address === rule;
     return domain === rule || domain.endsWith(`.${rule}`);
   });
+}
+
+const MONTH_ABBR = {
+  ene: 1, jan: 1, feb: 2, mar: 3, abr: 4, apr: 4, may: 5, jun: 6, jul: 7,
+  ago: 8, aug: 8, sep: 9, set: 9, oct: 10, nov: 11, dic: 12, dec: 12,
+};
+
+/** "11-Nov-26", "11/11/2026", "11 nov 2026" -> "2026-11-11". */
+export function parseStatementDate(raw) {
+  const value = String(raw || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  let day; let month; let year;
+  const named = /^(\d{1,2})[\s/.-]*([a-z]{3})[a-z]*\.?[\s/.-]*(\d{2,4})$/.exec(value);
+  const numeric = /^(\d{1,2})[/.-](\d{1,2})[/.-](\d{2,4})$/.exec(value);
+  if (named) {
+    [day, month, year] = [Number(named[1]), MONTH_ABBR[named[2]], Number(named[3])];
+  } else if (numeric) {
+    [day, month, year] = [Number(numeric[1]), Number(numeric[2]), Number(numeric[3])];
+  } else {
+    return null;
+  }
+  if (!month || month > 12 || day < 1 || day > 31) return null;
+  if (year < 100) year += 2000;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function cardBrand(text) {
+  if (/american express|\bamex\b/i.test(text)) return 'Amex';
+  if (/master\s*card|\bmaster\b/i.test(text)) return 'Mastercard';
+  if (/\bvisa\b/i.test(text)) return 'Visa';
+  return null;
+}
+
+/** Monto opcional despues de una etiqueta: "Saldo en Pesos: $320473,00". */
+function labeledAmount(body, label) {
+  const match = new RegExp(`${label}\\s*:?\\s*(?:U\\$S|USD|US\\$|\\$)?\\s*(-?[\\d.]+(?:,\\d{1,2})?)`, 'i').exec(body);
+  if (!match) return null;
+  const cents = parseAmountToCents(match[1].replace(/^-/, ''));
+  return Number.isSafeInteger(cents) ? cents : null;
+}
+
+/** Resumen de tarjeta (e-resumen): vencimiento y saldos. */
+export function parseCardStatement({ subject = '', text = '' } = {}) {
+  const body = normalizeSpaces(`${subject}\n${text}`);
+  if (!/e-?resumen|resumen de (?:tu )?tarjeta/i.test(body)) return null;
+  const due = /vencimiento\s*:?\s*(\d{1,2}[\s/.-]*(?:[a-záéíóú]{3,10}\.?|\d{1,2})[\s/.-]*\d{2,4})/i.exec(body);
+  const dueDate = due ? parseStatementDate(due[1]) : null;
+  const pesosCents = labeledAmount(body, 'saldo (?:actual )?en pesos');
+  const dollarsCents = labeledAmount(body, 'saldo (?:actual )?en d[oó]lares');
+  const minimumCents = labeledAmount(body, 'pago m[ií]nimo(?: en pesos)?');
+  if (!dueDate || (pesosCents === null && dollarsCents === null)) return null;
+  const brand = cardBrand(body);
+  return {
+    bank: 'macro',
+    kind: 'statement',
+    brand,
+    name: `Tarjeta ${brand ? `${brand} ` : ''}Macro`,
+    dueDate,
+    pesosCents,
+    dollarsCents,
+    minimumCents,
+  };
 }
 
 /**

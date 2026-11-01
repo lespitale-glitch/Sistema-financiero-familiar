@@ -15,7 +15,8 @@ import { createAlertsService } from '../src/services/alerts.js';
 import { createEmailService } from '../src/services/email.js';
 import { createTransactionsService } from '../src/services/transactions.js';
 import { createUsersService } from '../src/services/users.js';
-import { cleanMerchant, isBankSender, parseBankAlert } from '../src/services/bank-alerts.js';
+import { createBillsService } from '../src/services/bills.js';
+import { cleanMerchant, isBankSender, parseBankAlert, parseCardStatement } from '../src/services/bank-alerts.js';
 
 const silentLogger = createLogger({ level: 'silent' });
 const NOW = new Date('2026-10-21T15:00:00.000Z');
@@ -105,7 +106,8 @@ async function setup(t, env = {}) {
   const clock = () => NOW;
   const alerts = createAlertsService({ repos, config, notifier, logger: silentLogger, clock });
   const transactions = createTransactionsService({ repos, config, alerts, logger: silentLogger, clock });
-  const email = createEmailService({ config, repos, services: { users, transactions, alerts }, logger: silentLogger, notifier, clock });
+  const bills = createBillsService({ repos, config, logger: silentLogger, clock });
+  const email = createEmailService({ config, repos, services: { users, transactions, alerts, bills }, logger: silentLogger, notifier, clock });
   t.after(async () => {
     const filePath = repos.store.filePath;
     await repos.close();
@@ -175,4 +177,49 @@ test('un familiar puede reenviar el aviso a mano', async (t) => {
   const [transaction] = await repos.transactions.list({ limit: 5 });
   const ana = await repos.users.getByTelegramId('222');
   assert.equal(transaction.userId, ana.id);
+});
+
+const RESUMEN = {
+  subject: 'E-Resumen de Tarjeta Visa',
+  text: `Tu E-RESUMEN ya está disponible
+Estimado/a
+EJEMPLO JUAN P
+Ya podés consultar el Resumen de tu Tarjeta
+Accedé a tu Resumen
+Vencimiento: 11-Nov-26
+Saldo en Pesos: $250000,00
+Saldo en Dólares: $12,50
+Pago mínimo en pesos: $30.000,00`,
+};
+
+test('parser: e-resumen de tarjeta (vencimiento, saldos y marca)', () => {
+  const statement = parseCardStatement(RESUMEN);
+  assert.equal(statement.dueDate, '2026-11-11');
+  assert.equal(statement.pesosCents, 25_000_000);
+  assert.equal(statement.dollarsCents, 1_250);
+  assert.equal(statement.minimumCents, 3_000_000);
+  assert.equal(statement.name, 'Tarjeta Visa Macro');
+  const master = parseCardStatement({ ...RESUMEN, subject: 'E-Resumen de Tarjeta Mastercard', text: RESUMEN.text.replace('11-Nov-26', '05-Dic-26') });
+  assert.equal(master.name, 'Tarjeta Mastercard Macro');
+  assert.equal(master.dueDate, '2026-12-05');
+  assert.equal(parseCardStatement(DEBITO), null);
+});
+
+test('email del Macro: el e-resumen se agenda como vencimiento y no como gasto', async (t) => {
+  const { repos, email, messages } = await setup(t);
+  const result = await email.ingestEmail({ from: 'avisos@macro.com.ar', messageId: 'res-1', ...RESUMEN });
+  assert.equal(result.status, 'scheduled');
+  assert.equal((await repos.transactions.list({ limit: 5 })).length, 0);
+  const bills = await repos.bills.list();
+  assert.deepEqual(bills.map((bill) => [bill.name, bill.amountCents, bill.currency, bill.dueDate]), [
+    ['Tarjeta Visa Macro', 25_000_000, 'ARS', '2026-11-11'],
+    ['Tarjeta Visa Macro (dólares)', 1_250, 'USD', '2026-11-11'],
+  ]);
+  assert.match(messages.at(-1).html, /Vence el <b>11\/11<\/b>/);
+  assert.match(messages.at(-1).html, /No lo cuento como gasto/);
+
+  // Si el mismo resumen llega reenviado (otro messageId), no se duplica.
+  const again = await email.ingestEmail({ from: 'avisos@macro.com.ar', messageId: 'res-2', ...RESUMEN });
+  assert.equal(again.status, 'ignored');
+  assert.equal((await repos.bills.list()).length, 2);
 });

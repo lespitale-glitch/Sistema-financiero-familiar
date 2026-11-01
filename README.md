@@ -415,6 +415,7 @@ El bot registra solo cada compra con tarjeta (débito o crédito) y cada transfe
 - **Compra con tarjeta:** "ingresó una autorización de compra de $ 29.500,00 en el establecimiento MERPAGO*COMERCIO el día 13/10/2026 a las 19:42hs..." → gasto de $ 29.500 en "Comercio (débito, Mercado Pago)", con la fecha y hora de la compra.
 - **Transferencia a terceros:** se registra como gasto "Transferencia a Nombre".
 - **Transferencia "a tu cuenta de ..."** (entre cuentas propias): no se cuenta como gasto, solo se avisa.
+- **E-Resumen de tarjeta** (Visa / Mastercard): se agenda en `/vencimientos` (saldo en pesos y, si hay, en dólares) con recordatorio. No se cuenta como gasto, porque las compras ya entraron una por una.
 - **Aviso con un formato que no conoce:** avisa en Telegram y no registra nada.
 
 Cada gasto llega al chat con el botón **🗑️ Borrar**. No se guarda el número de tarjeta.
