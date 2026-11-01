@@ -1,7 +1,7 @@
 
 ======================================================================
 ## FINANZAS FAMILIARES  (la mantiene el chat/proyecto "Finanzas de familia")
-Última actualización: 2026-10-27
+Última actualización: 2026-10-31
 
 ### Qué es y dónde está
 - Bot de Telegram de gastos de la casa (Node.js, NO usa Python).
@@ -27,6 +27,10 @@
   subs_nocturno, generar_subs, fw_transcribe, mlx_whisper, faster_whisper, whisper-cli).
   Si está ocupado, espera (máx. 30 min) y nunca corre dos transcripciones propias a la vez.
   pgrep solo lee procesos: este programa nunca mata procesos de otros.
+- No cuenta con que Whisper corra todo el día: revisa en cada audio. Desde el 31/10 los subtítulos
+  (subs_nocturno) corren de 2:00 a 6:30; un audio en ese horario puede esperar hasta 30 min o pedir
+  que se reenvíe más tarde. El resto del día la RAM queda libre y la voz se transcribe al momento.
+- Fuera de los audios, el bot usa poca RAM (Node.js en reposo, ~100 MB).
 
 ### Cómo pararlo
 - npm run servicio:quitar (desde ~/Sistema-financiero-familiar), o matar solo por PID exacto
