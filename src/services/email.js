@@ -204,6 +204,9 @@ function notificationTarget(config, user) {
  *
  * @param {{config: object, repos: object, services: object, logger?: object, notifier?: object, clock?: () => Date}} deps
  */
+/** Dias hacia atras que revisa el poller de IMAP. */
+const IMAP_LOOKBACK_DAYS = 3;
+
 export function createEmailService({ config, repos, services, logger, notifier, clock = () => new Date() }) {
   const maxUploadBytes = Number(config?.gemini?.maxUploadBytes) || 10 * 1024 * 1024;
   const currency = config.app.currency;
@@ -688,9 +691,19 @@ export function createEmailService({ config, repos, services, logger, notifier, 
       await client.connect();
       const lock = await client.getMailboxLock(imap.mailbox || 'INBOX');
       try {
-        const uids = await client.search({ seen: false }, { uid: true });
-        const pending = (Array.isArray(uids) ? uids : []).slice(0, 20);
-        for (const uid of pending) {
+        // No depende de "no leido": si alguien abre el mail en el celular antes
+        // de que pase el bot, igual se procesa. Se miran los ultimos dias y se
+        // salta lo que ya esta en email_log (por Message-ID).
+        const since = new Date(clock().getTime() - IMAP_LOOKBACK_DAYS * 86_400_000);
+        const uids = await client.search({ since }, { uid: true });
+        const recent = (Array.isArray(uids) ? uids : []).slice(-50);
+        let handled = 0;
+        for (const uid of recent) {
+          if (handled >= 20) break;
+          const head = await client.fetchOne(uid, { envelope: true }, { uid: true });
+          const headerId = head?.envelope?.messageId || null;
+          if (headerId && await repos.emailLog.seen(headerId)) continue;
+          handled += 1;
           const message = await client.fetchOne(uid, { envelope: true, source: true }, { uid: true });
           if (!message?.source) continue;
           const parsed = await simpleParser(message.source);
