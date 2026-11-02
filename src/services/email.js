@@ -736,6 +736,7 @@ export function createEmailService({ config, repos, services, logger, notifier, 
       void pollOnce();
     }, seconds * 1000);
     pollTimer.unref?.();
+    logger?.info?.('email: IMAP activo', { user: config.email.imap.user, mailbox: config.email.imap.mailbox || 'INBOX', everySeconds: seconds });
     void pollOnce();
     return true;
   }
