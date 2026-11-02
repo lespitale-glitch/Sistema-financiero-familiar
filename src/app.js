@@ -152,7 +152,7 @@ export async function createApp({ env = process.env, loadEnvFile = true, logger 
 
     await scheduler.start();
     if (config.email.imap.enabled) {
-      await email.startImapPoller();
+      await services.email.startImapPoller();
     }
 
     const listening = await web.start(port ?? config.app.port);
@@ -169,7 +169,7 @@ export async function createApp({ env = process.env, loadEnvFile = true, logger 
 
   async function stop() {
     try { scheduler.stop(); } catch { /* noop */ }
-    try { await email.stopImapPoller(); } catch { /* noop */ }
+    try { await services.email.stopImapPoller(); } catch { /* noop */ }
     if (bot) {
       try { bot.stop && bot.stop(); } catch { /* noop */ }
     }

@@ -22,7 +22,13 @@ const SMOKE_ENV = {
   API_TOKEN: 'smoke-token',
   TELEGRAM_BOT_TOKEN: '',
   GEMINI_API_KEY: '',
-  IMAP_HOST: '',
+  // IMAP apuntando a un puerto cerrado: prueba que el arranque con IMAP activo no rompe la app.
+  IMAP_HOST: '127.0.0.1',
+  IMAP_PORT: '9',
+  IMAP_SECURE: 'false',
+  IMAP_USER: 'smoke@familia.test',
+  IMAP_PASSWORD: 'smoke',
+  IMAP_POLL_SECONDS: '3600',
   PORT: '0',
 };
 
