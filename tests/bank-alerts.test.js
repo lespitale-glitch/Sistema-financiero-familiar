@@ -239,3 +239,16 @@ test('email del Macro: si el texto plano no trae el aviso, se lee del HTML', asy
   assert.equal(transaction.amountCents, 9_599_900);
   assert.match(transaction.note, /Tiendaejemplo \(crédito, Mercado Pago\)/);
 });
+
+test('parser: aviso con entidades HTML sin decodificar (autorizaci&oacute;n, d&iacute;a)', () => {
+  const alert = parseBankAlert({
+    subject: 'Aviso de compra con Tarjeta de Crédito VISA',
+    text: ':: MACRO :: Estimado Cliente: Queremos informarte que ingres&oacute; una autorizaci&oacute;n de compra de $ 95.999,00 en el establecimiento MERPAGO*TIENDAEJEMPLO el d&iacute;a 02/11/2026 a las 19:31hs , con la Tarjeta de Crédito VISA de JUAN EJEMPLO finalizada en 1111 . Si no lo reconoc&eacute;s...',
+    timezone: TZ,
+    now: NOW,
+  });
+  assert.equal(alert.amountCents, 9_599_900);
+  assert.equal(alert.merchant, 'Tiendaejemplo');
+  assert.equal(alert.cardType, 'credito');
+  assert.equal(alert.occurredAt, '2026-11-02T22:31:00.000Z');
+});

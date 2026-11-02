@@ -23,8 +23,23 @@ import { zonedTimeToUtc } from '../utils/dates.js';
 /** Prefijos de procesadores de pago que no son el comercio real. */
 const PROCESSOR_PREFIXES = /^(?:MERPAGO|MERCADOPAGO|MP|PAYU|DLO|DLOCAL|SP|PAYPAL|GOOGLE|APPLE\.COM\/BILL)\s*\*\s*/i;
 
-function normalizeSpaces(text) {
+/** Entidades HTML que el Macro deja sin decodificar ("autorizaci&oacute;n"). */
+const NAMED_ENTITIES = {
+  aacute: 'á', eacute: 'é', iacute: 'í', oacute: 'ó', uacute: 'ú',
+  Aacute: 'Á', Eacute: 'É', Iacute: 'Í', Oacute: 'Ó', Uacute: 'Ú',
+  ntilde: 'ñ', Ntilde: 'Ñ', uuml: 'ü', Uuml: 'Ü', iexcl: '¡', iquest: '¿',
+  nbsp: ' ', amp: '&', quot: '"', apos: "'", lt: '<', gt: '>', deg: '°', ordm: 'º', ordf: 'ª',
+};
+
+export function decodeEntities(text) {
   return String(text || '')
+    .replace(/&#x([0-9a-f]+);/gi, (match, hex) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (match, code) => String.fromCodePoint(Number(code)))
+    .replace(/&([a-z]+);/gi, (match, name) => NAMED_ENTITIES[name] ?? match);
+}
+
+function normalizeSpaces(text) {
+  return decodeEntities(text)
     .replace(/[  ]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();

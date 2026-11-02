@@ -6,7 +6,7 @@ import { formatDate } from '../utils/dates.js';
 import { escapeHtml } from '../utils/telegram-html.js';
 import { matchCategory, parseTransactionMessage } from './parser.js';
 import { buildPendingDocumentMessage } from './reports.js';
-import { isBankSender, parseBankAlert, parseCardStatement } from './bank-alerts.js';
+import { decodeEntities, isBankSender, parseBankAlert, parseCardStatement } from './bank-alerts.js';
 
 const SUPPORTED_EXTENSIONS = Object.freeze({
   jpg: 'image/jpeg',
@@ -85,6 +85,7 @@ export function htmlToText(html) {
   for (const [entity, replacement] of Object.entries(HTML_ENTITIES)) {
     value = value.split(entity).join(replacement);
   }
+  value = decodeEntities(value);
   return value
     .split('\n')
     .map((line) => line.replace(/[ \t]+/g, ' ').trim())
