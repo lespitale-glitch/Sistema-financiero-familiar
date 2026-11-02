@@ -223,6 +223,7 @@ Roles: `husband`, `wife`, `daughter`, `son`, `other`.
 | `WEEKLY_SUMMARY_AT` | No | `09:00` | Hora local del resumen semanal. |
 | `MONTHLY_SUMMARY_AT` | No | `08:00` | Hora local del cierre mensual. |
 | `ALERT_AUTHOR_DM` | No | `true` | Alerta también al autor. |
+| `MOVEMENT_NOTIFY_IDS` | No | vacío | Aviso privado de cada movimiento con saldo del mes (`src/services/movements.js`). |
 | `REPORT_TIMEZONE` | No | = `TZ` | Zona horaria de períodos. |
 
 ### Email

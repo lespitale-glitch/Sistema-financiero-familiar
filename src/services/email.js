@@ -241,6 +241,22 @@ export function createEmailService({ config, repos, services, logger, notifier, 
     }
   }
 
+  /** Agrega el saldo del mes y avisa a MOVEMENT_NOTIFY_IDS que no vean el chat destino. */
+  async function withBalance(html, transaction) {
+    const line = await services.movements?.balanceLine?.(transaction?.occurredAt);
+    return line ? `${html}\n\n${line}` : html;
+  }
+
+  async function announce(result, target, userName) {
+    try {
+      await services.movements?.announce?.({
+        transaction: result.transaction, category: result.category, userName, chatId: target,
+      });
+    } catch (error) {
+      logger?.warn?.('email: no pude avisar el movimiento', { error: error?.message || String(error) });
+    }
+  }
+
   async function notify(chatId, html, extra = {}) {
     if (!notifier?.sendMessage) return { ok: false, reason: 'notifier-unavailable' };
     try {
@@ -397,10 +413,11 @@ export function createEmailService({ config, repos, services, logger, notifier, 
     });
     await markLog({ messageId, fromAddress: from, subject, status: 'logged', transactionId: result.transaction.id });
     if (target) {
-      await notify(target, buildTransactionMessage(result.transaction, result.category).replace('desde email', 'desde el banco'), {
+      await notify(target, await withBalance(buildTransactionMessage(result.transaction, result.category).replace('desde email', 'desde el banco'), result.transaction), {
         reply_markup: transactionKeyboard(result.transaction.id),
       });
     }
+    await announce(result, target, owner.name);
     return { ok: true, status: 'logged', transactionId: result.transaction.id, message: 'Movimiento registrado desde aviso bancario.' };
   }
 
@@ -585,8 +602,9 @@ export function createEmailService({ config, repos, services, logger, notifier, 
         });
         const target = notificationTarget(config, user);
         if (target) {
-          await notify(target, buildTransactionMessage(result.transaction, result.category));
+          await notify(target, await withBalance(buildTransactionMessage(result.transaction, result.category), result.transaction));
         }
+        await announce(result, target, user.name);
         await markLog({
           messageId,
           fromAddress: from,

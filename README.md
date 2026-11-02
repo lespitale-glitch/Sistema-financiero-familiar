@@ -289,6 +289,7 @@ Para Supabase, ejecutar antes `supabase/schema.sql` en el SQL Editor del proyect
 | `WEEKLY_SUMMARY_AT` | No | `09:00` | Hora local del resumen semanal. |
 | `MONTHLY_SUMMARY_AT` | No | `08:00` | Hora local del cierre mensual (día 1). |
 | `ALERT_AUTHOR_DM` | No | `true` | Enviar también la alerta al chat privado del autor del movimiento. |
+| `MOVEMENT_NOTIFY_IDS` | No | vacío | IDs de Telegram que reciben por privado cada movimiento (nuevo, borrado o restaurado) con el saldo del mes. No se envía si la confirmación ya le llegó a esa persona (su chat privado o el grupo familiar). Todas las confirmaciones muestran el saldo del mes. |
 | `REPORT_TIMEZONE` | No | valor de `TZ` | Zona horaria usada para calcular periodos. |
 
 ### Email

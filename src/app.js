@@ -20,6 +20,7 @@ import { createFxService } from './services/fx.js';
 import { createBillsService } from './services/bills.js';
 import { createAlertsService } from './services/alerts.js';
 import { createTransactionsService } from './services/transactions.js';
+import { createMovementsService } from './services/movements.js';
 import { createUsersService } from './services/users.js';
 import { createEmailService } from './services/email.js';
 import { createScheduler } from './services/scheduler.js';
@@ -81,6 +82,8 @@ export async function createApp({ env = process.env, loadEnvFile = true, logger 
   const transactions = createTransactionsService({ repos, config, alerts, fx, logger: log });
   const bills = createBillsService({ repos, config, logger: log });
 
+  const movements = createMovementsService({ config, repos, notifier, logger: log });
+
   const services = {
     users,
     transactions,
@@ -88,6 +91,7 @@ export async function createApp({ env = process.env, loadEnvFile = true, logger 
     ocr,
     fx,
     bills,
+    movements,
   };
 
   // El servicio de email usa services.* en runtime (transactions/alerts/ocr).

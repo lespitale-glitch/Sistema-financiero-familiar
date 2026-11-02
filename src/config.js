@@ -174,6 +174,7 @@ export function loadConfig(env = process.env, { loadEnvFile = false } = {}) {
       familyChatId,
       allowedChatIds: telegramChatIds,
       alertAuthorDm: bool(env.ALERT_AUTHOR_DM, true),
+      movementNotifyIds: list(env.MOVEMENT_NOTIFY_IDS),
     },
     db: {
       driver: dbDriver,

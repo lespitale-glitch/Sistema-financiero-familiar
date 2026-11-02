@@ -292,7 +292,31 @@ async function createFromParsed(ctx, deps, parsed, { source = 'text', metadata =
       ].join('\n'),
     };
   }
-  return confirmationFor(deps, user, result);
+  const confirmation = await confirmationFor(deps, user, result);
+  confirmation.text += await balanceBlock(deps, result.transaction.occurredAt);
+  await announceMovement(ctx, deps, result.transaction, { category: result.category });
+  return confirmation;
+}
+
+/** Saldo del mes (para sumar a las confirmaciones). */
+async function balanceBlock(deps, at) {
+  const line = await deps.services.movements?.balanceLine?.(at);
+  return line ? `\n\n${line}` : '';
+}
+
+/** Aviso privado a quienes siguen los movimientos (MOVEMENT_NOTIFY_IDS). */
+async function announceMovement(ctx, deps, transaction, { category = null, action = 'created' } = {}) {
+  try {
+    await deps.services.movements?.announce?.({
+      transaction,
+      category,
+      action,
+      userName: ctx.state?.user?.name || null,
+      chatId: ctx.chat?.id ?? null,
+    });
+  } catch (error) {
+    deps.logger?.warn?.('no pude avisar el movimiento', { error: error?.message || String(error) });
+  }
 }
 
 async function createParsedTransaction(deps, user, parsed, { source, metadata }) {
@@ -1488,7 +1512,9 @@ export const handleCallbackQuery = safe('callback', async (ctx, deps) => {
     });
     text += '\n\n✅ <b>Documento confirmado</b>';
     text += budgetBlock(summary, result, deps);
+    text += await balanceBlock(deps, result.transaction.occurredAt);
     await editHtml(ctx, deps, text);
+    await announceMovement(ctx, deps, result.transaction, { category: result.category });
     await answerCallback(ctx, '✅ Confirmado');
     return;
   }
@@ -1708,9 +1734,10 @@ export const handleDelete = safe('borrar', async (ctx, deps) => {
     await replyHtml(ctx, 'ℹ️ Ese movimiento ya estaba borrado.');
     return;
   }
-  await replyHtml(ctx, `🗑️ <b>Borrado:</b> ${transactionLine(deps, transaction, categoryMap)}`, {
+  await replyHtml(ctx, `🗑️ <b>Borrado:</b> ${transactionLine(deps, transaction, categoryMap)}${await balanceBlock(deps, transaction.occurredAt)}`, {
     reply_markup: restoreKeyboard(transaction.id),
   });
+  await announceMovement(ctx, deps, result.transaction, { category: categoryMap.get(transaction.categoryId) || null, action: 'deleted' });
 });
 
 async function handleTransactionCallback(ctx, deps, action) {
@@ -1725,13 +1752,18 @@ async function handleTransactionCallback(ctx, deps, action) {
   const categories = await deps.repos.categories.list({ includeInactive: true });
   const categoryMap = new Map(categories.map((category) => [category.id, category]));
   const line = transactionLine(deps, result.transaction, categoryMap);
+  const balance = await balanceBlock(deps, result.transaction.occurredAt);
   if (discard) {
     await answerCallback(ctx, '🗑️ Borrado');
-    await replyHtml(ctx, `🗑️ <b>Borrado:</b> ${line}`, { reply_markup: restoreKeyboard(result.transaction.id) });
+    await replyHtml(ctx, `🗑️ <b>Borrado:</b> ${line}${balance}`, { reply_markup: restoreKeyboard(result.transaction.id) });
   } else {
     await answerCallback(ctx, '↩️ Restaurado');
-    await replyHtml(ctx, `↩️ <b>Restaurado:</b> ${line}`, { reply_markup: transactionKeyboard(result.transaction.id) });
+    await replyHtml(ctx, `↩️ <b>Restaurado:</b> ${line}${balance}`, { reply_markup: transactionKeyboard(result.transaction.id) });
   }
+  await announceMovement(ctx, deps, result.transaction, {
+    category: categoryMap.get(result.transaction.categoryId) || null,
+    action: discard ? 'deleted' : 'restored',
+  });
 }
 
 // ---------------------------------------------------------------------------

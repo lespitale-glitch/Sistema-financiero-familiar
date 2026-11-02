@@ -554,3 +554,42 @@ test('en el grupo, un no autorizado queda en el log sin respuesta (salvo comando
   await middleware(make('hola', 'private'), async () => {});
   assert.equal(replies.length, 2, 'en privado siempre responde');
 });
+
+test('avisos de movimientos: saldo en la confirmación y aviso privado a MOVEMENT_NOTIFY_IDS', async (t) => {
+  const { harness, ctx } = await setup(t, { env: { MOVEMENT_NOTIFY_IDS: '222', ALERTS_ENABLED: 'false' } });
+  const dmsToLeo = () => harness.sent.filter((entry) => entry.chatId === '222' && /movimiento/i.test(entry.html));
+
+  // Ana carga un ingreso y un gasto por privado: Leo recibe aviso con el saldo.
+  ctx.message = { text: 'cobré 100000 sueldo' };
+  await handleText(ctx, harness.deps);
+  const gasto = createFakeCtx({ user: harness.user, text: 'gasté 1500 en el super' });
+  await handleText(gasto, harness.deps);
+
+  const confirmation = gasto.captured.find((entry) => entry.kind === 'reply' && /registrado/i.test(entry.html));
+  assert.match(confirmation.html, /Saldo <b>\$\s?98\.500/);
+  assert.equal(dmsToLeo().length, 2);
+  assert.match(dmsToLeo()[1].html, /Nuevo movimiento/);
+  assert.match(dmsToLeo()[1].html, /Por Ana/);
+  assert.match(dmsToLeo()[1].html, /Saldo <b>\$\s?98\.500/);
+
+  // En el grupo familiar Leo ya lo ve: no se duplica por privado.
+  const enGrupo = createFakeCtx({ user: harness.user, text: 'gasté 500 en la verdu', chatType: 'group' });
+  await handleText(enGrupo, harness.deps);
+  assert.equal(dmsToLeo().length, 2);
+
+  // Borrar con el botón también avisa con el saldo actualizado.
+  const button = confirmation.extra.reply_markup.inline_keyboard[0][0];
+  const delCtx = createFakeCtx({ user: harness.user });
+  delCtx.callbackQuery = { data: button.callback_data };
+  await handleCallbackQuery(delCtx, harness.deps);
+  assert.equal(dmsToLeo().length, 3);
+  assert.match(dmsToLeo()[2].html, /Movimiento borrado/);
+  assert.match(dmsToLeo()[2].html, /Saldo <b>\$\s?99\.500/);
+});
+
+test('avisos de movimientos: quien carga por su privado no recibe el aviso duplicado', async (t) => {
+  const { harness } = await setup(t, { env: { MOVEMENT_NOTIFY_IDS: '111', ALERTS_ENABLED: 'false' } });
+  const ctx = createFakeCtx({ user: harness.user, text: 'gasté 1500 en el super' });
+  await handleText(ctx, harness.deps);
+  assert.equal(harness.sent.filter((entry) => /Nuevo movimiento/.test(entry.html)).length, 0);
+});

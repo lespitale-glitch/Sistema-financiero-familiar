@@ -11,6 +11,7 @@ import { createTransactionsService } from '../../src/services/transactions.js';
 import { createUsersService } from '../../src/services/users.js';
 import { createBillsService } from '../../src/services/bills.js';
 import { createFxService } from '../../src/services/fx.js';
+import { createMovementsService } from '../../src/services/movements.js';
 
 /** Fecha fija: 15/10/2026 09:00 en America/Argentina/Buenos_Aires. */
 export const FIXED_DATE = new Date('2026-10-15T12:00:00.000Z');
@@ -108,6 +109,7 @@ export async function createHarness({ ocr, env = {} } = {}) {
     alerts,
     fx,
     bills,
+    movements: createMovementsService({ config, repos, notifier, logger: silentLogger, clock }),
     ocr: ocr || createFakeOcr(),
   };
 
