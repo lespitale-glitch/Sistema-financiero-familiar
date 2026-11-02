@@ -223,3 +223,19 @@ test('email del Macro: el e-resumen se agenda como vencimiento y no como gasto',
   assert.equal(again.status, 'ignored');
   assert.equal((await repos.bills.list()).length, 2);
 });
+
+test('email del Macro: si el texto plano no trae el aviso, se lee del HTML', async (t) => {
+  const { repos, email } = await setup(t);
+  const html = `<table><tr><td><p>Estimado Cliente:</p><p>Queremos informarte que ingresó una autorización de compra de <b>$&nbsp;95.999,00</b> en el establecimiento <b>MERPAGO*TIENDAEJEMPLO</b> el día <b>02/11/2026</b> a las <b>19:31hs</b>, con la <b>Tarjeta de Crédito VISA</b> de <b>JUAN EJEMPLO</b> finalizada en <b>1111</b>.</p></td></tr></table>`;
+  const result = await email.ingestEmail({
+    from: 'info@notificaciones.bancomacro.com.ar',
+    messageId: 'html-1',
+    subject: 'Aviso de compra con Tarjeta de Crédito VISA',
+    text: 'Para ver este mensaje correctamente, habilitá la vista HTML.',
+    html,
+  });
+  assert.equal(result.status, 'logged');
+  const [transaction] = await repos.transactions.list({ limit: 1 });
+  assert.equal(transaction.amountCents, 9_599_900);
+  assert.match(transaction.note, /Tiendaejemplo \(crédito, Mercado Pago\)/);
+});

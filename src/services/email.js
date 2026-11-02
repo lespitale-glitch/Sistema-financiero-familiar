@@ -342,7 +342,10 @@ export function createEmailService({ config, repos, services, logger, notifier, 
     return { ok: true, status: created.length ? 'scheduled' : 'ignored', httpStatus: 200, message: 'Resumen de tarjeta agendado.' };
   }
 
-  async function handleBankAlert({ messageId, from, subject, text }) {
+  async function handleBankAlert({ messageId, from, subject, text, html = null }) {
+    // Algunos avisos traen una parte de texto plano distinta (o vacia) a lo que
+    // se ve en el HTML: se prueba con las dos.
+    const htmlText = html ? htmlToText(html) : '';
     if (!bankConfig.enabled) return null;
     const fromBank = isBankSender(from, bankConfig.senders);
     // Tambien sirve si un familiar reenvia el aviso a mano.
@@ -350,16 +353,22 @@ export function createEmailService({ config, repos, services, logger, notifier, 
       && Boolean(await services.users.resolveEmailUser(from));
     if (!fromBank && !forwardedByFamily) return null;
 
-    const alert = parseBankAlert({ subject, text, timezone, now: clock() });
+    const alert = parseBankAlert({ subject, text, timezone, now: clock() })
+      || (htmlText ? parseBankAlert({ subject, text: htmlText, timezone, now: clock() }) : null);
     const owner = forwardedByFamily ? await services.users.resolveEmailUser(from) : await bankOwner();
     const target = notificationTarget(config, owner);
 
-    const statement = parseCardStatement({ subject, text });
+    const statement = parseCardStatement({ subject, text })
+      || (htmlText ? parseCardStatement({ subject, text: htmlText }) : null);
     if (statement) return handleCardStatement({ messageId, from, subject, statement, owner, target });
 
     if (!alert) {
       if (!fromBank) return null; // reenvio de un familiar que no es aviso: sigue el flujo normal
-      logger?.warn?.('email: aviso del banco con formato desconocido', { messageId, from, subject });
+      // Vista previa sin numeros (no guarda montos, tarjetas ni telefonos) para ajustar el lector.
+      const preview = (source) => String(source || '').replace(/\s+/g, ' ').replace(/\d/g, '#').slice(0, 400);
+      logger?.warn?.('email: aviso del banco con formato desconocido', {
+        messageId, from, subject, textPreview: preview(text), htmlPreview: preview(htmlText),
+      });
       await markLog({ messageId, fromAddress: from, subject, status: 'unparsed', error: 'aviso-bancario-no-reconocido' });
       if (target) {
         await notify(target, [
@@ -474,7 +483,7 @@ export function createEmailService({ config, repos, services, logger, notifier, 
         };
       }
 
-      const bankOutcome = await handleBankAlert({ messageId, from, subject, text });
+      const bankOutcome = await handleBankAlert({ messageId, from, subject, text, html: normalized.html });
       if (bankOutcome) return bankOutcome;
 
       const user = await services.users.resolveEmailUser(from);
