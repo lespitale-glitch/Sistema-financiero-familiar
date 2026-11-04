@@ -617,3 +617,15 @@ test('/tarjetas agrupa el gasto con crédito por tarjeta y muestra el medio de p
   await handleText(pregunta, harness.deps);
   assert.match(allReplyText(pregunta), /Tarjetas de crédito/);
 });
+
+test('/tarjetas suma los avisos sin terminación a la única tarjeta de esa marca', async (t) => {
+  const { handleCards } = await import('../src/bot/handlers.js');
+  const { harness } = await setup(t, { env: { ALERTS_ENABLED: 'false' } });
+  const base = { user: harness.user, type: 'variable_expense', source: 'email', occurredAt: new Date('2026-10-10T15:00:00Z') };
+  await harness.services.transactions.create({ ...base, amountCents: 100_000, note: 'Uno', payment: { method: 'credit', brand: 'Visa', last4: '1111' } });
+  await harness.services.transactions.create({ ...base, amountCents: 50_000, note: 'Dos', payment: { method: 'credit', brand: 'Visa', last4: null } });
+  const ctx = createFakeCtx({ user: harness.user, payload: '' });
+  await handleCards(ctx, harness.deps);
+  const text = allReplyText(ctx);
+  assert.match(text, /Visa ····1111<\/b> · \$\s?1\.500 \(2 compras\)/);
+});

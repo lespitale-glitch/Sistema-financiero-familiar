@@ -1952,6 +1952,18 @@ export const handleCards = safe('tarjetas', async (ctx, deps) => {
     }
   }
 
+  // Un aviso sin terminación ("Visa") se suma a la única Visa con terminación que haya.
+  for (const [group, entry] of [...cards.entries()]) {
+    if (group.includes('····')) continue;
+    const matches = [...cards.keys()].filter((other) => other !== group && other.startsWith(`${group} ····`));
+    if (matches.length !== 1) continue;
+    const target = cards.get(matches[0]);
+    target.totalCents += entry.totalCents;
+    target.items.push(...entry.items);
+    target.items.sort((a, b) => String(b.occurredAt).localeCompare(String(a.occurredAt)));
+    cards.delete(group);
+  }
+
   const lines = [`💳 <b>Tarjetas de crédito · ${escapeHtml(monthLabel(key))}</b>`, ''];
   if (!cards.size) {
     lines.push('Este mes no hay gastos con tarjeta de crédito registrados.');
