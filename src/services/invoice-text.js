@@ -395,10 +395,53 @@ export function extractMercadoPago(lines, { categories = [], defaultYear } = {})
  * @param {{categories?: object[], now?: Date, defaultYear?: number}} [options]
  * @returns {object} raw compatible con el esquema de Gemini.
  */
+/**
+ * Comprobante de compra de dólares (home banking): es una inversión, por el
+ * total debitado en pesos. "Monto de compra U$S 200,00 · Cotización $ 1.570,00 ·
+ * Total a debitar $ 314.000,00".
+ */
+function extractDollarPurchase(lines, fullText, { categories, year }) {
+  if (!/compra de (?:dolares|moneda extranjera|divisas)/.test(fullText)) return null;
+  const valueAfter = (label) => {
+    const index = lines.findIndex((line) => label.test(normalizeLine(line)));
+    if (index < 0) return null;
+    const sameLine = findAmounts(lines[index].replace(/^[^$\d]*?(?=(?:u\$s|us\$|usd|\$))/i, ''))[0];
+    return sameLine || findAmounts(lines[index + 1] || '')[0] || null;
+  };
+  const total = valueAfter(/^total (?:a debitar|debitado|en pesos)|^importe debitado|^total$/);
+  if (!total) return null;
+  const usd = valueAfter(/^monto de (?:la )?compra|^monto en (?:dolares|u\$s)|^importe en (?:dolares|u\$s)/);
+  const rate = valueAfter(/^cotizaci[oó]n|^tipo de cambio/);
+  let issuedDate = null;
+  for (const line of lines) {
+    const dates = findDates(line, { defaultYear: year });
+    if (dates.length) { issuedDate = dates[0]; break; }
+  }
+  const category = categories.find((item) => normalizeLine(item.name) === 'inversiones')
+    || categories.find((item) => item.type === TRANSACTION_TYPES.INVESTMENT)
+    || null;
+  const detail = [usd ? `U$S ${usd.text}` : null, rate ? `a $ ${rate.text}` : null].filter(Boolean).join(' ');
+  return {
+    vendor: 'Compra de dólares',
+    description: detail ? `Compra de ${detail}` : 'Compra de dólares',
+    total: total.text,
+    currency: 'ARS', // se debita en pesos: no se convierte
+    due_date: null,
+    issued_date: issuedDate,
+    category: category?.name || null,
+    type: TRANSACTION_TYPES.INVESTMENT,
+    confidence: usd ? 0.9 : 0.75,
+    line_items: [],
+  };
+}
+
 export function extractInvoiceFields(text, { categories = [], now = new Date(), defaultYear } = {}) {
   const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const fullText = normalizeLine(lines.join(' \n '));
   const year = defaultYear || now.getUTCFullYear();
+
+  const dollars = extractDollarPurchase(lines, fullText, { categories, year });
+  if (dollars) return dollars;
 
   const mp = extractMercadoPago(lines, {
     categories: categories.filter((category) => [TRANSACTION_TYPES.FIXED_EXPENSE, TRANSACTION_TYPES.VARIABLE_EXPENSE].includes(category.type)),

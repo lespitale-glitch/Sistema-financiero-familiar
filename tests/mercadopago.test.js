@@ -159,3 +159,34 @@ FARMACIA EJEMPLO
 TOTAL $ 1.500,00`);
   assert.equal(raw.vendor, 'FARMACIA EJEMPLO');
 });
+
+const COMPRA_DOLARES = `Operación
+Inversiones
+Cuenta débito
+CA $ 00000000000001
+Cuenta crédito
+CA U$S 00000000000002
+Acción realizada
+Compra de dólares
+Monto de compra
+U$S 100,00
+Cotización
+$ 1.500,00
+Total a debitar
+$ 150.000,00
+Estado
+Finalizada
+Número de transacción
+abc123def456
+03/11/2026                         10:00:00
+Página 1`;
+
+test('compra de dólares del home banking: inversión por el total en pesos', () => {
+  const raw = read(COMPRA_DOLARES);
+  assert.equal(raw.type, 'investment');
+  assert.equal(raw.category, 'Inversiones');
+  assert.equal(raw.total, '150.000,00');
+  assert.equal(raw.currency, 'ARS');
+  assert.equal(raw.description, 'Compra de U$S 100,00 a $ 1.500,00');
+  assert.equal(raw.issued_date, '2026-11-03');
+});

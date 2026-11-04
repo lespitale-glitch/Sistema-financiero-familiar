@@ -1934,7 +1934,7 @@ export const handleCards = safe('tarjetas', async (ctx, deps) => {
   ]);
   const categoryMap = new Map(categories.map((category) => [category.id, category]));
   const money = (cents) => formatCents(cents, currencyOf(deps), localeOf(deps));
-  const expenses = transactions.filter((transaction) => transaction.type !== 'income');
+  const expenses = transactions.filter((transaction) => transaction.type === 'fixed_expense' || transaction.type === 'variable_expense');
 
   const cards = new Map();
   const others = { debit: 0, mercadopago: 0, cash: 0, transfer: 0, none: 0 };
