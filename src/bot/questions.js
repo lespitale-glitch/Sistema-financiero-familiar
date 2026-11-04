@@ -16,6 +16,7 @@ const QUESTION_START = /^(?:bot[,:]?\s+)?(?:que|cuanto|cuanta|cuantos|cuantas|cu
 /** Orden importa: lo mas especifico primero. */
 const TOPICS = [
   { command: 'vencimientos', pattern: /\bvenc|\bque (?:tengo|hay) que pagar|\bpor pagar\b|\bfacturas? pendientes?\b/ },
+  { command: 'tarjetas', pattern: /\btarjetas?\b|\bvisa\b|\bmaster(?:card)?\b|\bcredito\b|\bresumen de (?:la )?tarjeta\b/ },
   { command: 'presupuesto', pattern: /\bpresupuesto/ },
   { command: 'movimientos', pattern: /\bmovimientos?\b|\bultimos?\b|\bultimas?\b/ },
   { command: 'inversiones', pattern: /\binver|\bahorr/ },
@@ -49,7 +50,7 @@ export function detectQuestion(text) {
   if (/\d/.test(withoutYears)) return null;
   const topic = TOPICS.find((entry) => entry.pattern.test(raw));
   if (!topic) return null;
-  const monthText = ['gastos', 'ingresos', 'balance', 'presupuesto'].includes(topic.command)
+  const monthText = ['gastos', 'ingresos', 'balance', 'presupuesto', 'tarjetas'].includes(topic.command)
     ? extractMonthText(raw)
     : '';
   return { command: topic.command, payload: monthText };

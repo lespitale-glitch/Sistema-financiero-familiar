@@ -209,6 +209,8 @@ function findVendor(lines, fullText) {
   const skip = /^(factura|original|duplicado|ticket|comprobante|recibo|cuit|iva|responsable|ingresos brutos|inicio de|fecha|nro|n°|cod|codigo|tipo|pagina|hoja|[a-c]$)/;
   for (const line of lines.slice(0, 8)) {
     const normalized = normalizeLine(line);
+    // Encabezados de captura del celular ("< Pagaste la suscri...") no son el comercio.
+    if (/^[<‹←]/.test(line.trim()) || /(\.{3}|…)\s*$/.test(line.trim())) continue;
     if (normalized.length < 3 || !/[a-z]{3,}/.test(normalized) || skip.test(normalized) || PRODUCT_LINE.test(normalized)) continue;
     return { name: line.trim().replace(/\s{2,}/g, ' ').slice(0, 60), hint: null, fixed: false, guessed: true };
   }
@@ -224,7 +226,49 @@ function detectCurrency(fullText) {
 // Comprobantes de Mercado Pago (transferencias, pagos en comercios, recargas)
 // ---------------------------------------------------------------------------
 
-const MP_MARKERS = /mercado ?pago|dinero disponible|n\.?\s*º?\s*de operaci[oó]n|origen y destino|pago en tienda/;
+const MP_MARKERS = /mercado ?pago|dinero disponible|n\.?\s*º?\s*de operaci[oó]n|origen y destino|pago en tienda|pagaste tu suscripci|veras el cargo|merpago\*/;
+
+function titleCase(text) {
+  return String(text || '').toLowerCase().replace(/(^|\s)\S/g, (letter) => letter.toUpperCase()).replace(/\b(De|Del|La|Las|Los|Y)\b/g, (word) => word.toLowerCase());
+}
+
+/** "Pagaste tu suscripción": vendedor, concepto y nombre en el resumen de la tarjeta. */
+function extractSubscription(lines, segments, { categories, issuedDate, headline }) {
+  const fullText = normalizeLine(lines.join(' \n '));
+  if (!/pagaste tu suscripci|suscripci[oó]n/.test(fullText) || !/pagaste/.test(fullText)) return null;
+  // Vendedor: lo que sigue a "Vendedor:" hasta "En tu resumen...".
+  let seller = null;
+  const sellerIndex = segments.findIndex((segment) => /^vendedor\b/.test(normalizeLine(segment)));
+  if (sellerIndex >= 0) {
+    const inline = segments[sellerIndex].replace(/^vendedor[:\s]*/i, '').trim();
+    const parts = inline ? [inline] : [];
+    for (const segment of segments.slice(sellerIndex + 1, sellerIndex + 6)) {
+      const normalized = normalizeLine(segment);
+      if (/en tu resumen|veras el cargo|^\$/.test(normalized)) break;
+      if (/^operaci|^[\d\s]+$/.test(normalized)) continue; // numero de operacion de la otra columna
+      if (/[a-z]{2,}/.test(normalized)) parts.push(segment.replace(/^\d{6,}\s+/, '').trim());
+    }
+    if (parts.length) seller = titleCase(parts.join(' ').replace(/\s+/g, ' ')).slice(0, 60);
+  }
+  const statementName = /a\s+nombre\s+de\s+([a-z0-9*.]+(?:\s[a-z0-9*.]+){0,3})/i.exec(lines.join(' '));
+  const fromStatement = statementName ? titleCase(statementName[1].replace(/^(?:merpago|mercadopago|mp)\s*\*\s*/i, '').trim()) : null;
+  const vendor = seller || fromStatement || null;
+  const conceptLine = lines.find((line) => /^suscripci[oó]n\b/i.test(line.trim()));
+  const concept = conceptLine ? conceptLine.trim().replace(/\s+/g, ' ').slice(0, 70) : 'Suscripción';
+  // Primero el vendedor ("obra social" -> Salud); el concepto puede traer palabras
+  // engañosas ("cuota" -> Educación).
+  const category = (vendor && matchCategory(vendor, categories)) || matchCategory(concept, categories);
+  return {
+    kind: 'subscription',
+    vendor,
+    description: concept,
+    total: headline?.text || null,
+    issued_date: issuedDate,
+    category: category?.name || null,
+    type: TRANSACTION_TYPES.FIXED_EXPENSE,
+    found: { amount: Boolean(headline), party: Boolean(vendor) },
+  };
+}
 const MP_NOT_A_NAME = /mercado ?pago|cvu|cbu|cuit|cuil|alias|banco|bco\b|operaci|motivo|comprobante|origen|destino|aprobad|rechazad|pendiente|medio de pago|dinero disponible|tienda|online|categor|ubicaci|acciones|agregar|denunciar|detalle|total|fecha|hora|usuario|asistente|transfer|enviad|recibid|compart|descarg|ayuda|^de$|^para$/;
 const MP_CATEGORY_MAP = Object.freeze({
   'comidas y bebidas': 'Comida',
@@ -313,6 +357,9 @@ export function extractMercadoPago(lines, { categories = [], defaultYear } = {})
       found: { amount: Boolean(headline), party: Boolean(destination) },
     };
   }
+
+  const subscription = extractSubscription(lines, segments, { categories, issuedDate, headline });
+  if (subscription) return subscription;
 
   // Pago en comercio / recarga: comercio conocido, o el nombre cerca del monto destacado.
   const known = KNOWN_VENDORS.find((vendor) => vendor.pattern.test(fullText));

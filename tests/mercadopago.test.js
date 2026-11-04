@@ -128,3 +128,34 @@ TOTAL A PAGAR  $ 45.320,50
   assert.equal(raw.vendor, 'Edesur');
   assert.equal(raw.due_date, '2026-11-10');
 });
+
+const SUSCRIPCION = `< Pagaste la suscri...
+Suscripción PLANSALUD100 Cuota mensual familiar
+Pagaste tu suscripción.
+Juan, acá están los detalles del pago:
+Visa terminada en 1111
+Pagaste $ 50000.00
+Operación:  Vendedor:
+100000000009  OBRA SOCIAL
+DE EJEMPLO
+En tu resumen, verás el cargo a
+nombre de
+MERPAGO*PLANSALUD`;
+
+test('suscripción de Mercado Pago: vendedor, concepto, gasto fijo y tarjeta', async () => {
+  const raw = read(SUSCRIPCION);
+  assert.equal(raw.vendor, 'Obra Social de Ejemplo');
+  assert.equal(raw.description, 'Suscripción PLANSALUD100 Cuota mensual familiar');
+  assert.equal(raw.total, '50000.00');
+  assert.equal(raw.category, 'Salud');
+  assert.equal(raw.type, 'fixed_expense');
+  const { detectPaymentInDocument } = await import('../src/services/payment.js');
+  assert.deepEqual(detectPaymentInDocument(SUSCRIPCION), { method: null, brand: 'Visa', last4: '1111' });
+});
+
+test('el encabezado de la captura ("< Pagaste la suscri...") nunca es el comercio', () => {
+  const raw = read(`< Volver...
+FARMACIA EJEMPLO
+TOTAL $ 1.500,00`);
+  assert.equal(raw.vendor, 'FARMACIA EJEMPLO');
+});

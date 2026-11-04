@@ -9,6 +9,7 @@ import {
 import { isPositiveCents } from '../utils/money.js';
 import { monthRange } from '../utils/dates.js';
 import { StoreError } from '../db/rows.js';
+import { resolvePayment } from './payment.js';
 
 const FALLBACK_BY_TYPE = Object.freeze({
   [TRANSACTION_TYPES.INCOME]: 'Otros ingresos',
@@ -90,6 +91,8 @@ export function createTransactionsService({ repos, config, alerts, logger, fx = 
     currency = config.app.currency,
     skipAlerts = false,
     alertUserName = null,
+    payment = null,
+    learnPayment = false,
   }) {
     if (!TYPE_LIST.includes(type)) {
       throw new StoreError(`Tipo de movimiento invalido: ${type}`, { code: 'INVALID_TYPE' });
@@ -97,7 +100,9 @@ export function createTransactionsService({ repos, config, alerts, logger, fx = 
     if (!isPositiveCents(amountCents)) {
       throw new StoreError('El monto debe ser mayor a cero.', { code: 'INVALID_AMOUNT' });
     }
-    const normalized = await normalizeCurrency(amountCents, currency, metadata);
+    const resolvedPayment = await resolvePayment(repos, payment || metadata?.payment || null, { learn: learnPayment });
+    const withPayment = resolvedPayment ? { ...metadata, payment: resolvedPayment } : metadata;
+    const normalized = await normalizeCurrency(amountCents, currency, withPayment);
     const resolvedCategory = await resolveCategory({ type, category, categoryId });
 
     const transaction = await repos.transactions.create({
@@ -159,6 +164,7 @@ export function createTransactionsService({ repos, config, alerts, logger, fx = 
       note: overrides.note || [document.vendor, document.extracted?.description].filter(Boolean).join(' · '),
       source: document.source === 'email' ? TRANSACTION_SOURCES.EMAIL : TRANSACTION_SOURCES.DOCUMENT,
       occurredAt: overrides.occurredAt || document.extracted?.issuedDate || clock(),
+      payment: document.extracted?.payment || null,
       metadata: {
         vendor: document.vendor,
         dueDate: document.dueDate,

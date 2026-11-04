@@ -7,6 +7,7 @@ import { escapeHtml } from '../utils/telegram-html.js';
 import { matchCategory, parseTransactionMessage } from './parser.js';
 import { buildPendingDocumentMessage } from './reports.js';
 import { decodeEntities, isBankSender, parseBankAlert, parseCardStatement } from './bank-alerts.js';
+import { paymentLabel } from './payment.js';
 
 const SUPPORTED_EXTENSIONS = Object.freeze({
   jpg: 'image/jpeg',
@@ -281,6 +282,8 @@ export function createEmailService({ config, repos, services, logger, notifier, 
       `${escapeHtml(meta.label)} · ${formatDate(transaction.occurredAt, timezone)}`,
     ];
     if (transaction.note) lines.push(`📝 ${escapeHtml(transaction.note)}`);
+    const payment = paymentLabel(transaction.metadata?.payment);
+    if (payment) lines.push(escapeHtml(payment));
     return lines.join('\n');
   }
 
@@ -415,6 +418,10 @@ export function createEmailService({ config, repos, services, logger, notifier, 
         : alert.merchant,
       source: TRANSACTION_SOURCES.EMAIL,
       occurredAt: alert.occurredAt,
+      payment: alert.kind === 'card'
+        ? { method: alert.cardType === 'credito' ? 'credit' : 'debit', brand: alert.cardBrand || null, last4: alert.cardLast4 || null }
+        : { method: 'transfer', brand: null, last4: null },
+      learnPayment: alert.kind === 'card',
       metadata: { bank: alert.bank, bankKind: alert.kind, email: { messageId, from, subject } },
       alertUserName: owner.name,
     });
@@ -606,6 +613,7 @@ export function createEmailService({ config, repos, services, logger, notifier, 
           category: parsed.category ?? parsed.categoryName ?? null,
           note: parsed.note || subject || 'Movimiento por email',
           source: TRANSACTION_SOURCES.EMAIL,
+          payment: parsed.payment || null,
           occurredAt: parsed.occurredAt || clock(),
           metadata: {
             email: { messageId, from, subject },

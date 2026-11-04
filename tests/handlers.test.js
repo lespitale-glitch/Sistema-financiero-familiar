@@ -593,3 +593,27 @@ test('avisos de movimientos: quien carga por su privado no recibe el aviso dupli
   await handleText(ctx, harness.deps);
   assert.equal(harness.sent.filter((entry) => /Nuevo movimiento/.test(entry.html)).length, 0);
 });
+
+test('/tarjetas agrupa el gasto con crédito por tarjeta y muestra el medio de pago al cargar', async (t) => {
+  const { handleCards } = await import('../src/bot/handlers.js');
+  const { harness } = await setup(t, { env: { ALERTS_ENABLED: 'false' } });
+  const conVisa = createFakeCtx({ user: harness.user, text: 'gasté 5000 en el super con visa' });
+  await handleText(conVisa, harness.deps);
+  assert.match(allReplyText(conVisa), /Pago: 💳 Visa crédito/);
+  await handleText(createFakeCtx({ user: harness.user, text: 'gasté 3000 nafta con master' }), harness.deps);
+  await handleText(createFakeCtx({ user: harness.user, text: 'gasté 300 en efectivo' }), harness.deps);
+
+  const ctx = createFakeCtx({ user: harness.user, payload: '' });
+  await handleCards(ctx, harness.deps);
+  const text = allReplyText(ctx);
+  assert.match(text, /Tarjetas de crédito/);
+  assert.match(text, /Visa<\/b> · \$\s?5\.000 \(1 compra\)/);
+  assert.match(text, /Mastercard<\/b> · \$\s?3\.000/);
+  assert.match(text, /Total con crédito: <b>\$\s?8\.000/);
+  assert.match(text, /Efectivo \$\s?300/);
+
+  // También responde a la pregunta en lenguaje natural.
+  const pregunta = createFakeCtx({ user: harness.user, text: '¿cuánto gasté con la visa?' });
+  await handleText(pregunta, harness.deps);
+  assert.match(allReplyText(pregunta), /Tarjetas de crédito/);
+});

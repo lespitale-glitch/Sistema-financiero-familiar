@@ -10,6 +10,7 @@ import { parseAmountToCents, toCents } from '../utils/money.js';
 import { localParts, pad2, parseHumanDate } from '../utils/dates.js';
 import { TRANSACTION_TYPES, TYPE_LIST } from '../domain.js';
 import { extractInvoiceFields } from './invoice-text.js';
+import { detectPaymentInDocument } from './payment.js';
 
 const LOCAL_OCR_MODEL = 'macos-vision';
 const LOCAL_AUDIO_MODEL = 'whisper.cpp';
@@ -515,6 +516,7 @@ export function createOcrService({ gemini, local = null, config, logger, clock =
       confidence,
       lineItems,
       rawText: String(rawText || '').slice(0, MAX_RAW_TEXT),
+      payment: detectPaymentInDocument(rawText),
       warnings,
       model: visionModel,
       fileName: fileName || null,

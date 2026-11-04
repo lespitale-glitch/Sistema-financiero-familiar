@@ -416,6 +416,7 @@ El bot registra solo cada compra con tarjeta (débito o crédito) y cada transfe
 - **Compra con tarjeta:** "ingresó una autorización de compra de $ 29.500,00 en el establecimiento MERPAGO*COMERCIO el día 13/10/2026 a las 19:42hs..." → gasto de $ 29.500 en "Comercio (débito, Mercado Pago)", con la fecha y hora de la compra.
 - **Transferencia a terceros:** se registra como gasto "Transferencia a Nombre".
 - **Transferencia "a tu cuenta de ..."** (entre cuentas propias): no se cuenta como gasto, solo se avisa.
+- **Medio de pago**: cada aviso guarda la tarjeta (marca, crédito o débito y últimos 4 dígitos). Así el bot aprende qué tarjeta es cada terminación y un comprobante de Mercado Pago que dice "Visa terminada en 1234" queda en la tarjeta correcta. `/tarjetas [mes]` muestra el gasto con crédito por tarjeta y los resúmenes por pagar. En texto: `gasté 5000 super con visa` (o `con master`, `con débito`, `en efectivo`). Para completar movimientos viejos: `node scripts/pagos-anteriores.mjs --aplicar`.
 - **E-Resumen de tarjeta** (Visa / Mastercard): se agenda en `/vencimientos` (saldo en pesos y, si hay, en dólares) con recordatorio. No se cuenta como gasto, porque las compras ya entraron una por una.
 - **Aviso con un formato que no conoce:** avisa en Telegram y no registra nada.
 

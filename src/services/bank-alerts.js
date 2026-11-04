@@ -154,12 +154,15 @@ export function parseBankAlert({ subject = '', text = '', timezone = 'UTC', now 
     const hour = card[7] ? Number(card[7]) : 12;
     const minute = card[8] ? Number(card[8]) : 0;
     const occurred = zonedTimeToUtc(year, month, day, hour, minute, 0, timezone);
-    const typeMatch = /Tarjeta de (D[eé]bito|Cr[eé]dito)/i.exec(body);
+    const typeMatch = /Tarjeta de (D[eé]bito|Cr[eé]dito)\s*(VISA|MASTER\s*CARD|MASTERCARD|MASTER|AMEX|AMERICAN EXPRESS|CABAL)?/i.exec(body);
+    const last4 = /finalizada en\s*(\d{4})\b/i.exec(body);
     const merchant = cleanMerchant(card[3]);
     return {
       bank: 'macro',
       kind: 'card',
       cardType: typeMatch && /cr/i.test(typeMatch[1]) ? 'credito' : 'debito',
+      cardBrand: cardBrand(typeMatch?.[2] || ''),
+      cardLast4: last4 ? last4[1] : null,
       amountCents,
       currency: currencyFrom(card[1]),
       merchant: merchant.name,

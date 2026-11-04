@@ -48,7 +48,10 @@ test('parser: compra con débito (monto, comercio, fecha y hora local)', () => {
   assert.equal(alert.viaMercadoPago, true);
   assert.equal(alert.occurredAt, '2026-10-13T22:42:00.000Z'); // 19:42 en Buenos Aires
   assert.equal(alert.ownTransfer, false);
-  assert.ok(!JSON.stringify(alert).includes('9876'), 'no guarda la tarjeta');
+  // Solo los últimos 4 dígitos (para separar tarjetas), nunca el titular.
+  assert.equal(alert.cardBrand, 'Visa');
+  assert.equal(alert.cardLast4, '9876');
+  assert.ok(!/JUAN|EJEMPLO/.test(JSON.stringify(alert)), 'no guarda el titular');
 });
 
 test('parser: transferencia a cuenta propia y a terceros', () => {

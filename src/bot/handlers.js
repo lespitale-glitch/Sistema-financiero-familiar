@@ -16,6 +16,7 @@ import {
 } from '../domain.js';
 import { familyTitle } from '../config.js';
 import { detectQuestion } from './questions.js';
+import { cardKey } from '../services/payment.js';
 import {
   formatCents,
   parseAmountToCents,
@@ -322,6 +323,7 @@ async function announceMovement(ctx, deps, transaction, { category = null, actio
 async function createParsedTransaction(deps, user, parsed, { source, metadata }) {
   return deps.services.transactions.create({
     user,
+    payment: parsed.payment || null,
     type: parsed.type,
     amountCents: parsed.amountCents,
     currency: parsed.currency || currencyOf(deps),
@@ -427,6 +429,7 @@ export const handleHelp = safe('help', async (ctx, deps) => {
     '• /ingresos <code>[mes]</code> — detalle de ingresos',
     '• /inversiones <code>[mes]</code> — inversiones y ahorro',
     '• /reporte <code>[mes]</code> — resumen completo del mes',
+    '• /tarjetas <code>[mes]</code> — gasto con crédito por tarjeta (Visa, Mastercard) y resúmenes por pagar',
     '• /alertas — evaluar umbrales del mes actual',
     '• O preguntá: <code>¿qué gastos tuve en octubre?</code>, <code>¿cómo venimos este mes?</code>',
     '',
@@ -1147,6 +1150,7 @@ const QUESTION_HANDLERS = {
   presupuesto: (ctx, deps) => handleBudget(ctx, deps),
   movimientos: (ctx, deps) => handleRecent(ctx, deps),
   vencimientos: (ctx, deps) => handleBills(ctx, deps),
+  tarjetas: (ctx, deps) => handleCards(ctx, deps),
 };
 
 /** Procesa texto (libre o transcripto) y registra el movimiento si aplica. */
@@ -1908,4 +1912,83 @@ export const handleUnknownCommand = safe('unknown-command', async (ctx, deps) =>
     'Probá con /ayuda para ver la lista completa, o registrá un movimiento:',
     '<code>Gasté 15.000 en el super #comida</code>',
   ].join('\n'));
+});
+
+// ---------------------------------------------------------------------------
+// /tarjetas: gasto con crédito por tarjeta (Visa, Mastercard...) del mes
+// ---------------------------------------------------------------------------
+
+const CARD_ITEMS_SHOWN = 6;
+
+export const handleCards = safe('tarjetas', async (ctx, deps) => {
+  const raw = String(ctx.payload || '').trim();
+  const key = monthKeyFromPayload(ctx, deps);
+  if (!key) {
+    await replyInvalidMonth(ctx, deps, raw);
+    return;
+  }
+  const range = monthRange(key, tzOf(deps));
+  const [transactions, categories] = await Promise.all([
+    deps.repos.transactions.list({ from: range.start, to: range.end, status: 'confirmed', limit: 5000, order: 'desc' }),
+    deps.repos.categories.list({ includeInactive: true }),
+  ]);
+  const categoryMap = new Map(categories.map((category) => [category.id, category]));
+  const money = (cents) => formatCents(cents, currencyOf(deps), localeOf(deps));
+  const expenses = transactions.filter((transaction) => transaction.type !== 'income');
+
+  const cards = new Map();
+  const others = { debit: 0, mercadopago: 0, cash: 0, transfer: 0, none: 0 };
+  for (const transaction of expenses) {
+    const payment = transaction.metadata?.payment || null;
+    if (payment?.method === 'credit') {
+      const group = cardKey(payment);
+      const entry = cards.get(group) || { totalCents: 0, items: [] };
+      entry.totalCents += transaction.amountCents;
+      entry.items.push(transaction);
+      cards.set(group, entry);
+    } else {
+      const bucket = payment?.method && others[payment.method] !== undefined ? payment.method : 'none';
+      others[bucket] += transaction.amountCents;
+    }
+  }
+
+  const lines = [`💳 <b>Tarjetas de crédito · ${escapeHtml(monthLabel(key))}</b>`, ''];
+  if (!cards.size) {
+    lines.push('Este mes no hay gastos con tarjeta de crédito registrados.');
+  } else {
+    let total = 0;
+    for (const [group, entry] of [...cards.entries()].sort((a, b) => b[1].totalCents - a[1].totalCents)) {
+      total += entry.totalCents;
+      lines.push(`<b>${escapeHtml(group)}</b> · ${money(entry.totalCents)} (${entry.items.length} ${entry.items.length === 1 ? 'compra' : 'compras'})`);
+      for (const transaction of entry.items.slice(0, CARD_ITEMS_SHOWN)) {
+        lines.push(`  ${transactionLine(deps, transaction, categoryMap)}`);
+      }
+      if (entry.items.length > CARD_ITEMS_SHOWN) lines.push(`  … y ${entry.items.length - CARD_ITEMS_SHOWN} más`);
+      lines.push('');
+    }
+    lines.push(`Total con crédito: <b>${money(total)}</b>`);
+  }
+
+  const otherLabels = { debit: 'Débito', mercadopago: 'Mercado Pago', cash: 'Efectivo', transfer: 'Transferencia', none: 'Sin dato' };
+  const otherParts = Object.entries(others).filter(([, cents]) => cents > 0).map(([method, cents]) => `${otherLabels[method]} ${money(cents)}`);
+  if (otherParts.length) lines.push('', `Otros medios: ${otherParts.join(' · ')}`);
+
+  // Resúmenes de tarjeta por pagar (llegan por email o se cargan con /vence).
+  try {
+    const pending = await deps.repos.bills.list({ status: 'pending' });
+    const statements = pending.filter((bill) => /tarjeta|visa|master|amex/i.test(bill.name));
+    if (statements.length) {
+      lines.push('', '<b>Resúmenes por pagar</b>');
+      for (const bill of statements.slice(0, 6)) {
+        const [, month, day] = String(bill.dueDate).split('-');
+        const amount = bill.amountCents ? ` · ${formatCents(bill.amountCents, bill.currency || currencyOf(deps), localeOf(deps))}` : '';
+        lines.push(`• ${escapeHtml(bill.name)} · vence ${day}/${month}${amount}`);
+      }
+    }
+  } catch (error) {
+    deps.logger?.warn?.('tarjetas: no pude leer los vencimientos', { error: error?.message || String(error) });
+  }
+
+  lines.push('', 'Para indicar la tarjeta al cargar: <code>gasté 5000 super con visa</code> (o <code>con master</code>, <code>con débito</code>, <code>en efectivo</code>).');
+  await replyHtml(ctx, lines.join('\n'));
 });

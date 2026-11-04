@@ -9,6 +9,7 @@ import { formatCents } from '../utils/money.js';
 import { monthLabel } from '../utils/dates.js';
 import { escapeHtml, progressBar } from '../utils/telegram-html.js';
 import { fxSourceLabel } from './fx.js';
+import { paymentLabel } from './payment.js';
 
 const MAX_MESSAGE = 3900;
 const FALLBACK_EMOJI = '🏷️';
@@ -580,6 +581,8 @@ export function buildTransactionConfirmation({
   if (transaction.note) {
     lines.push(`Nota: ${escapeHtml(truncate(transaction.note, 120))}`);
   }
+  const payment = paymentLabel(transaction.metadata?.payment);
+  if (payment) lines.push(`Pago: ${escapeHtml(payment)}`);
   if (user?.name) {
     lines.push(`Usuario: ${escapeHtml(truncate(user.name, 40))}`);
   }

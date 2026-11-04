@@ -12,6 +12,7 @@ import {
 } from '../domain.js';
 import { parseAmountToCents } from '../utils/money.js';
 import { parseHumanDate } from '../utils/dates.js';
+import { detectPaymentInMessage } from './payment.js';
 
 const DEFAULT_TYPE = TRANSACTION_TYPES.VARIABLE_EXPENSE;
 
@@ -465,6 +466,8 @@ function cleanNote(raw, candidate, explicitDateRaw, categoryName, type) {
   note = note.replace(unicodeWordRegex(NOTE_VERBS.join('|')), ' ');
   note = note.replace(unicodeWordRegex(NOTE_FILLERS.join('|')), ' ');
   note = note.replace(/\bu\$[sd]\b|\bus\$|\bverdes\b/gi, ' ');
+  // Medio de pago: queda en metadata.payment, no en la nota.
+  note = note.replace(/\b(?:con|en)\s+(?:la\s+|el\s+)?(?:tarjeta\s+(?:de\s+)?)?(?:visa|master(?:card)?|amex|cabal|naranja|d[eé]bito|cr[eé]dito|efectivo|mercado\s?pago|mp)\b(?:\s+(?:d[eé]bito|cr[eé]dito))?/gi, ' ');
   note = note.replace(unicodeWordRegex('ars|usd|eur|brl|clp|mxn|uyu|pyg|pen|pesos?|d[oó]lares?|euros?'), ' ');
   note = note.replace(/[$€£¥]/g, ' ');
   note = note.replace(/\s+/g, ' ').trim();
@@ -491,6 +494,7 @@ function buildResult(base) {
     confidence: base.confidence ?? 0,
     raw: base.raw ?? '',
     warnings: Array.isArray(base.warnings) ? base.warnings : [],
+    ...(base.payment ? { payment: base.payment } : {}),
   };
 }
 
@@ -644,6 +648,7 @@ export function parseTransactionMessage(message, options = {}) {
   return buildResult({
     ...base,
     ok: true,
+    payment: detectPaymentInMessage(raw),
     currency: detectedCurrency,
     amountCents: best.cents,
     amountText: best.text,
