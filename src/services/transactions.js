@@ -11,6 +11,28 @@ import { monthRange } from '../utils/dates.js';
 import { StoreError } from '../db/rows.js';
 import { resolvePayment } from './payment.js';
 
+const GENERIC_NOTES = /^(otros?|movimiento|gasto|ingreso|inversion|varios|compra|pago)$/;
+
+/**
+ * Clave del comercio para recordar su categoria: "Market Carapachay (crédito)"
+ * -> "market carapachay"; "SUBE · Pago en SUBE" -> "sube".
+ */
+export function merchantKey(note) {
+  const key = String(note || '')
+    .split(' · ')[0]
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/^[<‹←\s]+/, '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9ñ ]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 40);
+  if (key.length < 3 || GENERIC_NOTES.test(key)) return null;
+  return key;
+}
+
 const FALLBACK_BY_TYPE = Object.freeze({
   [TRANSACTION_TYPES.INCOME]: 'Otros ingresos',
   [TRANSACTION_TYPES.INVESTMENT]: 'Inversiones',
@@ -58,6 +80,75 @@ export function createTransactionsService({ repos, config, alerts, logger, fx = 
     };
   }
 
+  async function rememberedCategory(note) {
+    const key = merchantKey(note);
+    if (!key || !repos.settings) return null;
+    try {
+      const name = await repos.settings.get(`merchant.${key}`, null);
+      return name ? await repos.categories.getByName(name) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Cambia la categoría de un movimiento, la recuerda para ese comercio y la
+   * aplica a los otros movimientos del mismo comercio del mes que estaban en
+   * la categoría por defecto.
+   */
+  async function recategorize(transactionId, categoryId) {
+    const transaction = await repos.transactions.get(transactionId);
+    if (!transaction) return { ok: false, reason: 'not-found' };
+    const category = await repos.categories.get(categoryId);
+    if (!category) return { ok: false, reason: 'category-not-found' };
+    const updated = await repos.transactions.update(transaction.id, { categoryId: category.id });
+    const key = merchantKey(transaction.note);
+    let alsoUpdated = 0;
+    if (key && repos.settings) {
+      await repos.settings.set(`merchant.${key}`, category.name);
+      const fallback = await repos.categories.getByName(FALLBACK_CATEGORY_NAME);
+      const range = monthRange(monthKeyOf(transaction.occurredAt), config.reports?.timezone || config.app.timezone);
+      const sameMonth = await repos.transactions.list({ from: range.start, to: range.end, status: TRANSACTION_STATUS.CONFIRMED, limit: 5000 });
+      for (const other of sameMonth) {
+        if (other.id === transaction.id || merchantKey(other.note) !== key) continue;
+        if (other.categoryId && other.categoryId !== fallback?.id) continue;
+        await repos.transactions.update(other.id, { categoryId: category.id });
+        alsoUpdated += 1;
+      }
+    }
+    logger?.info?.('categoria cambiada', { transactionId: transaction.id, category: category.name, merchant: key, alsoUpdated });
+    return { ok: true, transaction: updated, category, alsoUpdated, merchant: key };
+  }
+
+  function monthKeyOf(iso) {
+    const tz = config.reports?.timezone || config.app.timezone;
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit' })
+      .formatToParts(new Date(iso)).map((part) => [part.type, part.value]));
+    return `${parts.year}-${parts.month}`;
+  }
+
+  function localDay(iso) {
+    const tz = config.reports?.timezone || config.app.timezone;
+    return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(iso));
+  }
+
+  /** Movimientos confirmados del mismo día, mismo tipo y mismo monto (posibles repetidos). */
+  async function findSimilar(transaction) {
+    if (!transaction?.occurredAt) return [];
+    const at = new Date(transaction.occurredAt).getTime();
+    const nearby = await repos.transactions.list({
+      from: new Date(at - 36 * 3_600_000),
+      to: new Date(at + 36 * 3_600_000),
+      status: TRANSACTION_STATUS.CONFIRMED,
+      limit: 500,
+    });
+    const day = localDay(transaction.occurredAt);
+    return nearby.filter((other) => other.id !== transaction.id
+      && other.type === transaction.type
+      && other.amountCents === transaction.amountCents
+      && localDay(other.occurredAt) === day);
+  }
+
   async function resolveCategory({ type, category = null, categoryId = null }) {
     if (categoryId) {
       const found = await repos.categories.get(categoryId);
@@ -100,10 +191,16 @@ export function createTransactionsService({ repos, config, alerts, logger, fx = 
     if (!isPositiveCents(amountCents)) {
       throw new StoreError('El monto debe ser mayor a cero.', { code: 'INVALID_AMOUNT' });
     }
+    let resolvedCategoryFinal = await resolveCategory({ type, category, categoryId });
+    // Si cayó en la categoría por defecto, se usa la que se le corrigió antes a ese comercio.
+    if (type !== TRANSACTION_TYPES.INCOME && (!resolvedCategoryFinal || resolvedCategoryFinal.name === FALLBACK_CATEGORY_NAME)) {
+      const remembered = await rememberedCategory(note);
+      if (remembered) resolvedCategoryFinal = remembered;
+    }
     const resolvedPayment = await resolvePayment(repos, payment || metadata?.payment || null, { learn: learnPayment });
     const withPayment = resolvedPayment ? { ...metadata, payment: resolvedPayment } : metadata;
     const normalized = await normalizeCurrency(amountCents, currency, withPayment);
-    const resolvedCategory = await resolveCategory({ type, category, categoryId });
+    const resolvedCategory = resolvedCategoryFinal;
 
     const transaction = await repos.transactions.create({
       userId: user?.id || userId || null,
@@ -242,6 +339,8 @@ export function createTransactionsService({ repos, config, alerts, logger, fx = 
     discardDocument,
     exportCsv,
     resolveCategory,
+    recategorize,
+    findSimilar,
   };
 }
 

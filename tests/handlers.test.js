@@ -629,3 +629,46 @@ test('/tarjetas suma los avisos sin terminación a la única tarjeta de esa marc
   const text = allReplyText(ctx);
   assert.match(text, /Visa ····1111<\/b> · \$\s?1\.500 \(2 compras\)/);
 });
+
+test('botón Categoría: cambia, recuerda el comercio y pasa los del mes', async (t) => {
+  const { harness } = await setup(t, { env: { ALERTS_ENABLED: 'false' } });
+  const base = { user: harness.user, type: 'variable_expense', source: 'email', occurredAt: new Date('2026-10-10T15:00:00Z') };
+  const first = await harness.services.transactions.create({ ...base, amountCents: 100_000, note: 'Market Ejemplo (crédito)' });
+  const second = await harness.services.transactions.create({ ...base, amountCents: 50_000, note: 'Market Ejemplo (débito)' });
+  assert.equal(first.category.name, 'Otros');
+
+  // Botón "Categoría" -> lista de categorías de gasto.
+  const pick = createFakeCtx({ user: harness.user });
+  pick.callbackQuery = { data: `tx:cat:${first.transaction.id}` };
+  await handleCallbackQuery(pick, harness.deps);
+  const picker = pick.captured.find((entry) => entry.kind === 'reply' && entry.extra?.reply_markup);
+  const superButton = picker.extra.reply_markup.inline_keyboard.flat().find((button) => /Supermercado/.test(button.text));
+  assert.ok(superButton, 'ofrece Supermercado');
+  assert.ok(!picker.extra.reply_markup.inline_keyboard.flat().some((button) => /Sueldo/.test(button.text)), 'no ofrece categorías de ingreso');
+  assert.ok(superButton.callback_data.length <= 64);
+
+  const set = createFakeCtx({ user: harness.user });
+  set.callbackQuery = { data: superButton.callback_data };
+  await handleCallbackQuery(set, harness.deps);
+  assert.match(allReplyText(set), /Categoría cambiada/);
+  assert.match(allReplyText(set), /También pasé 1 movimiento/);
+  const supermercado = await harness.repos.categories.getByName('Supermercado');
+  assert.equal((await harness.repos.transactions.get(first.transaction.id)).categoryId, supermercado.id);
+  assert.equal((await harness.repos.transactions.get(second.transaction.id)).categoryId, supermercado.id);
+
+  // La próxima compra del mismo comercio ya entra en Supermercado.
+  const next = await harness.services.transactions.create({ ...base, amountCents: 7_000, note: 'Market Ejemplo (crédito)' });
+  assert.equal(next.category.name, 'Supermercado');
+});
+
+test('avisa cuando un movimiento parece repetido (mismo monto, tipo y día)', async (t) => {
+  const { harness } = await setup(t, { env: { ALERTS_ENABLED: 'false' } });
+  await handleText(createFakeCtx({ user: harness.user, text: 'gasté 10000 sube' }), harness.deps);
+  const again = createFakeCtx({ user: harness.user, text: 'gasté 10000 sube' });
+  await handleText(again, harness.deps);
+  assert.match(allReplyText(again), /¿Repetido\?/);
+  // Un ingreso del mismo monto no es repetido de un gasto.
+  const income = createFakeCtx({ user: harness.user, text: 'cobré 10000 venta' });
+  await handleText(income, harness.deps);
+  assert.doesNotMatch(allReplyText(income), /¿Repetido\?/);
+});

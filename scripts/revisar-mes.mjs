@@ -68,7 +68,7 @@ if (discarded.length) {
 // Duplicados probables: mismo monto el mismo día.
 const byKey = new Map();
 for (const r of confirmed) {
-  const k = `${r.amount_cents}|${new Date(r.occurred_at).toLocaleDateString('es-AR', { timeZone: tz })}`;
+  const k = `${r.type}|${r.amount_cents}|${new Date(r.occurred_at).toLocaleDateString('es-AR', { timeZone: tz })}`;
   byKey.set(k, [...(byKey.get(k) || []), r]);
 }
 for (const group of byKey.values()) {

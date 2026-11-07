@@ -73,8 +73,20 @@ export function transactionKeyboard(transactionId) {
   return {
     inline_keyboard: [[
       { text: '🗑️ Borrar', callback_data: `${TRANSACTION_CALLBACK_PREFIX}:del:${transactionId}` },
+      { text: '🏷️ Categoría', callback_data: `${TRANSACTION_CALLBACK_PREFIX}:cat:${transactionId}` },
     ]],
   };
+}
+
+/** Botones con las categorías para cambiar la de un movimiento (2 por fila). */
+export function categoryPickerKeyboard(transactionId, categories) {
+  const buttons = categories.map((category) => ({
+    text: `${category.emoji || '🏷️'} ${category.name}`.slice(0, 30),
+    callback_data: `${TRANSACTION_CALLBACK_PREFIX}:sc:${transactionId}:${String(category.id).slice(0, 8)}`,
+  }));
+  const rows = [];
+  for (let index = 0; index < buttons.length; index += 2) rows.push(buttons.slice(index, index + 2));
+  return { inline_keyboard: rows };
 }
 
 /** Boton "Restaurar" despues de borrar. */
@@ -92,5 +104,7 @@ export function parseTransactionCallback(data) {
   if (parts[0] !== TRANSACTION_CALLBACK_PREFIX || !parts[2]) return null;
   if (parts[1] === 'del') return { action: 'delete', transactionId: parts[2] };
   if (parts[1] === 'undo') return { action: 'restore', transactionId: parts[2] };
+  if (parts[1] === 'cat') return { action: 'pick-category', transactionId: parts[2] };
+  if (parts[1] === 'sc' && parts[3]) return { action: 'set-category', transactionId: parts[2], categoryPrefix: parts[3] };
   return null;
 }

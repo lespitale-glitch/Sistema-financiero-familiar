@@ -35,6 +35,7 @@ import {
   progressBar,
 } from '../utils/telegram-html.js';
 import {
+  categoryPickerKeyboard,
   documentKeyboard,
   parseDocumentCallback,
   parseTransactionCallback,
@@ -294,6 +295,7 @@ async function createFromParsed(ctx, deps, parsed, { source = 'text', metadata =
     };
   }
   const confirmation = await confirmationFor(deps, user, result);
+  confirmation.text += await duplicateWarning(deps, result.transaction);
   confirmation.text += await balanceBlock(deps, result.transaction.occurredAt);
   await announceMovement(ctx, deps, result.transaction, { category: result.category });
   return confirmation;
@@ -303,6 +305,21 @@ async function createFromParsed(ctx, deps, parsed, { source = 'text', metadata =
 async function balanceBlock(deps, at) {
   const line = await deps.services.movements?.balanceLine?.(at);
   return line ? `\n\n${line}` : '';
+}
+
+/** "⚠️ Parece repetido": mismo monto, mismo tipo, mismo día. */
+async function duplicateWarning(deps, transaction) {
+  try {
+    const similar = await deps.services.transactions.findSimilar?.(transaction) || [];
+    if (!similar.length) return '';
+    const other = similar[0];
+    const [, month, day] = new Intl.DateTimeFormat('en-CA', { timeZone: tzOf(deps), year: 'numeric', month: '2-digit', day: '2-digit' })
+      .format(new Date(other.occurredAt)).split('-');
+    return `\n\n⚠️ <b>¿Repetido?</b> Ya hay ${similar.length === 1 ? 'otro movimiento' : `${similar.length} movimientos`} de ${formatCents(transaction.amountCents, currencyOf(deps), localeOf(deps))} el ${day}/${month}: «${escapeHtml(String(other.note || '').slice(0, 50))}». Si es el mismo, tocá Borrar.`;
+  } catch (error) {
+    deps.logger?.warn?.('no pude buscar repetidos', { error: error?.message || String(error) });
+    return '';
+  }
 }
 
 /** Aviso privado a quienes siguen los movimientos (MOVEMENT_NOTIFY_IDS). */
@@ -1516,8 +1533,9 @@ export const handleCallbackQuery = safe('callback', async (ctx, deps) => {
     });
     text += '\n\n✅ <b>Documento confirmado</b>';
     text += budgetBlock(summary, result, deps);
+    text += await duplicateWarning(deps, result.transaction);
     text += await balanceBlock(deps, result.transaction.occurredAt);
-    await editHtml(ctx, deps, text);
+    await editHtml(ctx, deps, text, { reply_markup: transactionKeyboard(result.transaction.id) });
     await announceMovement(ctx, deps, result.transaction, { category: result.category });
     await answerCallback(ctx, '✅ Confirmado');
     return;
@@ -1744,7 +1762,51 @@ export const handleDelete = safe('borrar', async (ctx, deps) => {
   await announceMovement(ctx, deps, result.transaction, { category: categoryMap.get(transaction.categoryId) || null, action: 'deleted' });
 });
 
+/** Botón "Categoría": muestra las categorías del mismo grupo (gastos o ingresos). */
+async function handleCategoryPick(ctx, deps, action) {
+  const transaction = await deps.repos.transactions.get(action.transactionId);
+  if (!transaction) {
+    await answerCallback(ctx, 'No encontré el movimiento.');
+    return;
+  }
+  const categories = await deps.repos.categories.list();
+  const sameGroup = categories.filter((category) => (transaction.type === 'income'
+    ? category.type === 'income'
+    : category.type !== 'income'));
+  await answerCallback(ctx, '🏷️ Elegí la categoría');
+  await replyHtml(ctx, `🏷️ <b>¿En qué categoría va?</b>\n${escapeHtml(transaction.note || '')} · ${formatCents(transaction.amountCents, currencyOf(deps), localeOf(deps))}\n\nLa recuerdo para la próxima vez que aparezca este comercio.`, {
+    reply_markup: categoryPickerKeyboard(transaction.id, sameGroup),
+  });
+}
+
+async function handleCategorySet(ctx, deps, action) {
+  const categories = await deps.repos.categories.list({ includeInactive: true });
+  const category = categories.find((item) => String(item.id).startsWith(action.categoryPrefix));
+  if (!category || typeof deps.services.transactions.recategorize !== 'function') {
+    await answerCallback(ctx, 'No encontré la categoría.');
+    return;
+  }
+  const result = await deps.services.transactions.recategorize(action.transactionId, category.id);
+  if (!result.ok) {
+    await answerCallback(ctx, 'No encontré el movimiento.');
+    return;
+  }
+  await answerCallback(ctx, `✅ ${category.name}`);
+  const lines = [`✅ <b>Categoría cambiada</b> a ${escapeHtml(category.emoji || '🏷️')} ${escapeHtml(category.name)}`];
+  if (result.merchant) lines.push(`La próxima vez que aparezca «${escapeHtml(result.merchant)}» va directo a ${escapeHtml(category.name)}.`);
+  if (result.alsoUpdated) lines.push(`También pasé ${result.alsoUpdated} ${result.alsoUpdated === 1 ? 'movimiento' : 'movimientos'} de este mes del mismo comercio.`);
+  await editHtml(ctx, deps, lines.join('\n'));
+}
+
 async function handleTransactionCallback(ctx, deps, action) {
+  if (action.action === 'pick-category') {
+    await handleCategoryPick(ctx, deps, action);
+    return;
+  }
+  if (action.action === 'set-category') {
+    await handleCategorySet(ctx, deps, action);
+    return;
+  }
   const discard = action.action === 'delete';
   const result = await setTransactionDiscarded(deps, action.transactionId, discard);
   if (!result.ok) {

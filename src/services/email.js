@@ -248,8 +248,17 @@ export function createEmailService({ config, repos, services, logger, notifier, 
 
   /** Agrega el saldo del mes y avisa a MOVEMENT_NOTIFY_IDS que no vean el chat destino. */
   async function withBalance(html, transaction) {
+    let out = html;
+    try {
+      const similar = await services.transactions?.findSimilar?.(transaction) || [];
+      if (similar.length) {
+        out += `\n\n⚠️ <b>¿Repetido?</b> Ya hay otro movimiento de ${formatCents(transaction.amountCents, currency, locale)} ese día: «${escapeHtml(String(similar[0].note || '').slice(0, 50))}». Si es el mismo, tocá Borrar.`;
+      }
+    } catch (error) {
+      logger?.warn?.('email: no pude buscar repetidos', { error: error?.message || String(error) });
+    }
     const line = await services.movements?.balanceLine?.(transaction?.occurredAt);
-    return line ? `${html}\n\n${line}` : html;
+    return line ? `${out}\n\n${line}` : out;
   }
 
   async function announce(result, target, userName) {
